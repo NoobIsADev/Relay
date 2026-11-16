@@ -24,12 +24,13 @@ let renderId = 0;
 let versionPromise;
 let popularPromise;
 let progress = new Map();
-let contentProgress = '';
+const downloads = new Map();
+const startingDownloads = new Set();
 let authBusy = false;
 let authCode;
 let authError = '';
+let authTarget = '';
 let projectSequence = 0;
-let installingContent = false;
 const pendingPreferences = new Map();
 let preferenceError = '';
 let preferencesSaved = false;
@@ -203,7 +204,9 @@ function refreshChrome() {
   refreshInstanceRail();
 }
 async function refresh(draw = true) {
+  const first = !data;
   data = await api.state();
+  if (first) for (const job of data.downloads) downloads.set(job.id, job);
   applySavedTheme();
   refreshChrome();
   if (draw) render();
@@ -214,12 +217,16 @@ function navigate(next) {
   refreshChrome();
   render();
 }
-function projectCard(project) {
+function projectCard(project, quick = false) {
   const key = project.slug || project.project_id;
-  return '<button type="button" class="project" data-action="project" data-id="' + esc(key) + '">' +
+  const details = '<button type="button" class="project" data-action="project" data-id="' + esc(key) + '">' +
     '<span class="row">' + image(project.icon_url, 'package', 'project-icon') + '<span class="truncate"><h3>' + esc(project.title) +
     '</h3><span class="tile-note">' + esc(project.author || categoryNames[project.project_type]) + '</span></span></span><span class="desc">' +
     esc(project.description) + '</span><span class="stats">' + svg('download') + count.format(project.downloads || 0) + '</span></button>';
+  if (!quick) return details;
+  return '<div class="project-tile">' + details + '<div class="project-actions"><button type="button" class="button" ' +
+    'data-action="quick-install" data-id="' + esc(project.project_id) + '" data-title="' + esc(project.title) +
+    '" data-type="' + esc(project.project_type) + '"></button></div></div>';
 }
 function actionFor(item, mode = 'primary') {
   const playing = data.running.includes(item.id);
@@ -259,7 +266,7 @@ function library(token) {
     throw error;
   });
   popularPromise.then(result => {
-    if (token === renderId) $('#popular').innerHTML = '<div class="project-grid">' + result.hits.slice(0, 3).map(projectCard).join('') + '</div>';
+    if (token === renderId) $('#popular').innerHTML = '<div class="project-grid">' + result.hits.slice(0, 3).map(project => projectCard(project)).join('') + '</div>';
   }).catch(error => {
     if (token === renderId) $('#popular').innerHTML = empty('wifi-off', 'Modrinth is unavailable', errorText(error));
   });
@@ -302,7 +309,8 @@ function discoverPage() {
       .map(([value, name]) => option(value, name, discover.index)).join('') + '</select>' +
     (discover.type === 'modpack' ? '' : '<select id="compatible" aria-label="Filter by instance">' +
       option('', 'All versions', discover.instance) + data.instances.map(item => option(item.id, item.name, discover.instance)).join('') + '</select>') +
-    '</div><div id="catalog-progress">' + progressHtml(contentProgress) + '</div><div id="results" aria-live="polite"></div></div>';
+    '</div><div id="catalog-progress" aria-live="polite"></div><div id="results" aria-live="polite"></div></div>';
+  refreshDownloads();
   $('#search').addEventListener('input', event => {
     discover.query = event.target.value;
     discover.offset = 0;
@@ -324,12 +332,13 @@ async function loadSearch() {
     const result = await api.search({ ...discover, instance: discover.type === 'modpack' ? '' : discover.instance });
     if (id !== renderId) return;
     const projectList = result.hits || [];
-    target.innerHTML = projectList.length ? '<div class="project-grid">' + projectList.map(projectCard).join('') +
+    target.innerHTML = projectList.length ? '<div class="project-grid">' + projectList.map(project => projectCard(project, true)).join('') +
       '</div><div class="row pager">' +
       button('Previous', 'arrow-left', 'previous', { disabled: discover.offset === 0 }) + '<span class="hint">' +
       (discover.offset + 1) + '–' + (discover.offset + projectList.length) + ' of ' + count.format(result.total_hits) + '</span>' +
       button('Next', 'arrow-right', 'next', { disabled: discover.offset + projectList.length >= Math.min(result.total_hits, 5000) }) + '</div>' :
       empty('search', 'No matching projects', 'Try a different search or select another instance.');
+    refreshDownloads();
   } catch (error) {
     if (id === renderId) target.innerHTML = empty('wifi-off', 'Could not reach Modrinth', errorText(error), button('Retry', 'refresh-cw', 'retry-search'));
 
@@ -373,8 +382,7 @@ function settingsStatus() {
 }
 function settingsAccount() {
   return '<p class="hint">' + esc(data.account ? 'Signed in as ' + data.account.name : 'Sign in with a Minecraft: Java Edition Microsoft account.') +
-    '</p><div>' + button(data.account ? 'Sign out' : 'Sign in', data.account ? 'log-out' : 'user-round',
-      data.account ? 'signout' : 'signin') + '</div>';
+    '</p><div>' + button(data.accounts.length ? 'Manage accounts' : 'Sign in', 'user-round', 'signin') + '</div>';
 }
 function preferencePatch(form, control) {
   const name = control.name;
@@ -424,6 +432,7 @@ async function savePreference(form, control) {
     const saved = await api.settings(patch);
     data.settings = saved.settings;
     data.account = saved.account;
+    data.accounts = saved.accounts;
     if (patch.shared) data.instances = saved.instances;
     if (name === 'microsoftClientId' && $('#settings-account')) $('#settings-account').innerHTML = settingsAccount();
     refreshChrome();
@@ -634,14 +643,31 @@ function confirmDialog(title, text, label, action, id) {
 }
 
 
+function showAccounts() {
+  if (authBusy) return showSignIn();
+  if (!data.accounts.length) return openSignIn('');
+  showDialog('Microsoft accounts', '<div class="accounts-list">' + data.accounts.map(profile => {
+    const selected = data.account?.id === profile.id;
+    return '<div class="account-row"><span class="avatar">' + esc(profile.name.slice(0, 2).toUpperCase()) +
+      '</span><div class="truncate"><strong>' + esc(profile.name) + '</strong>' +
+      (selected ? '<p class="tile-note">Active account</p>' : '') + '</div><div class="row account-actions">' +
+      (selected ? '' : button('Use account', 'check', 'select-account', { id: profile.id })) +
+      iconButton('Sign in again as ' + profile.name, 'refresh-cw', 'reconnect-account', profile.id) +
+      iconButton('Remove ' + profile.name, 'trash-2', 'remove-account', profile.id) + '</div></div>';
+  }).join('') + '</div>', button('Add account', 'plus', 'add-account', { style: 'primary' }));
+}
+function openSignIn(id) {
+  if (authBusy) return showSignIn();
+  authTarget = id;
+  authError = '';
+  if (modal.open) modal.close();
+  showSignIn();
+}
 function showSignIn() {
-  if (data.account && !authBusy) {
-    showDialog('Microsoft account', '<p>Signed in as <strong>' + esc(data.account.name) + '</strong>.</p>',
-      button('Sign out', 'log-out', 'signout'));
-    return;
-  }
+  const expected = data.accounts.find(profile => profile.id === authTarget);
   signin.innerHTML = '<div class="dialog-inner"><div class="dialog-head split"><div><h2>Sign in with Microsoft</h2>' +
-    '<p class="sub">Use the account that owns Minecraft Java Edition.</p></div>' +
+    '<p class="sub">' + esc(expected ? 'Reconnect the Microsoft account for ' + expected.name + '.' :
+      'Use an account that owns Minecraft Java Edition.') + '</p></div>' +
     iconButton('Close sign-in dialog', 'x', 'close-signin') + '</div>' +
     (authCode ? '<p>Enter this code in your browser and finish signing in.</p><output class="code">' +
       esc(authCode.userCode) + '</output><div class="row">' + button('Copy code', 'copy', 'copy-code') +
@@ -658,7 +684,7 @@ async function beginSignIn() {
   authCode = undefined;
   showSignIn();
   try {
-    const account = await api.signIn();
+    const account = await api.signIn(authTarget);
     if (signin.open) signin.close();
     await refresh();
     toast('Signed in as ' + account.name);
@@ -680,6 +706,7 @@ async function projectDialog(slug, target = discover.instance) {
     const { project, versions } = await api.project(slug, target);
     if (!modal.open || sequence !== projectSequence) return;
     const isPack = project.project_type === 'modpack';
+    const jobId = downloadId(project.id, isPack ? '' : target);
     const selected = versions.find(version => version.version_type === 'release') || versions[0];
     const instanceSelect = isPack ? '<p class="hint">This modpack creates its own instance.</p>' :
       field('Install into', '<select id="install-target">' + option('', 'Choose an instance', target) +
@@ -690,10 +717,10 @@ async function projectDialog(slug, target = discover.instance) {
     showDialog(project.title, '<p class="detail-text">' + esc(project.description) + '</p>' + instanceSelect + versionSelect +
       '<div class="row project-install-result" hidden><span role="status"></span>' +
       button('Open instance', 'arrow-up-right', 'installed-instance') + '</div>' +
-      '<div id="modal-catalog-progress">' + progressHtml(contentProgress) + '</div>',
+      '<div id="modal-catalog-progress" data-job="' + esc(jobId) + '"></div>',
       button('View on Modrinth', 'external-link', 'open-modrinth', { id: project.project_type + '/' + project.slug }) +
       button(isPack ? 'Install modpack' : 'Install', 'download', 'install-content', {
-        id: project.id, style: 'primary', disabled: !selected || (!isPack && !target) || Boolean(contentProgress)
+        id: project.id, style: 'primary', disabled: !selected || (!isPack && !target)
       }), count.format(project.downloads || 0) + ' downloads', image(project.icon_url, 'package', 'project-icon detail-logo'));
     const select = $('#install-target', modal);
     if (select) select.onchange = () => projectDialog(slug, select.value);
@@ -709,14 +736,66 @@ async function projectDialog(slug, target = discover.instance) {
         open.hidden = !isPack || !installed;
         open.dataset.id = isPack ? installed?.id || '' : '';
         const install = $('[data-action=install-content]', modal);
-        install.disabled = installingContent || Boolean(contentProgress) || (!isPack && (!target || Boolean(installed)));
-        const label = installed ? isPack ? 'Install another copy' : 'Installed' : isPack ? 'Install modpack' : 'Install';
-        install.innerHTML = svg(installed && !isPack ? 'check' : 'download') + label;
+        const busy = downloadPending(jobId);
+        install.disabled = busy || (!isPack && (!target || Boolean(installed)));
+        if (select) select.disabled = busy;
+        version.disabled = busy;
+        const label = busy ? 'Installing…' : installed ? isPack ? 'Install another copy' : 'Installed' : isPack ? 'Install modpack' : 'Install';
+        install.innerHTML = svg(installed && !isPack && !busy ? 'check' : 'download') + label;
       };
       version.onchange();
     }
+    refreshDownloads();
   } catch (error) {
     if (modal.open && sequence === projectSequence) modalError(error);
+  }
+}
+
+function downloadId(project, target = '') {
+  return target + '/' + project;
+}
+function downloadPending(id) {
+  return downloads.has(id) || startingDownloads.has(id);
+}
+function refreshDownloads() {
+  const queue = $('#catalog-progress');
+  if (queue) queue.innerHTML = [...downloads.values()].map(job =>
+    progressHtml((job.title ? job.title + ' · ' : '') + job.message)).join('');
+  const current = $('#modal-catalog-progress', modal);
+  if (current) current.innerHTML = progressHtml(downloads.get(current.dataset.job)?.message);
+  $('#project-version', modal)?.dispatchEvent(new Event('change'));
+  for (const install of document.querySelectorAll('[data-action=quick-install]')) {
+    const isPack = install.dataset.type === 'modpack';
+    const target = isPack ? '' : discover.instance;
+    const installed = itemById(target)?.content.some(entry => entry.project === install.dataset.id);
+    const busy = downloadPending(downloadId(install.dataset.id, target));
+    const label = busy ? 'Installing…' : installed ? 'Installed' : 'Install';
+    install.disabled = busy || installed || (!target && !isPack);
+    install.innerHTML = svg(installed ? 'check' : 'download') + label;
+    install.setAttribute('aria-label', label + ' ' + install.dataset.title);
+    if (!target && !isPack) install.title = 'Choose an instance from the filter to install content.';
+  }
+}
+
+async function installContent(project, version, target) {
+  const id = downloadId(project, target);
+  if (downloadPending(id)) return;
+  startingDownloads.add(id);
+  refreshDownloads();
+  try {
+    const result = await api.installProject(project, version, target);
+    await refresh(false);
+    if (page === 'discover') {
+      const compatible = $('#compatible');
+      if (compatible) compatible.innerHTML = option('', 'All versions', discover.instance) +
+        data.instances.map(item => option(item.id, item.name, discover.instance)).join('');
+    } else if (page === 'library' || page === 'instance') {
+      render();
+    }
+    toast('Installed ' + result.name);
+  } finally {
+    startingDownloads.delete(id);
+    refreshDownloads();
   }
 }
 
@@ -763,7 +842,7 @@ async function action(name, id, control) {
       }
       break;
     case 'play':
-      if (!data.account) return showSignIn();
+      if (!data.account) return showAccounts();
       control.disabled = true;
       try {
         await api.play(id);
@@ -773,45 +852,33 @@ async function action(name, id, control) {
       }
       break;
     case 'stop': await api.stop(id); break;
-    case 'signin': showSignIn(); break;
+    case 'signin': showAccounts(); break;
+    case 'add-account': openSignIn(''); break;
+    case 'reconnect-account': openSignIn(id); break;
+    case 'select-account':
+      await api.selectAccount(id);
+      modal.close();
+      await refresh();
+      toast('Using ' + data.account.name);
+      break;
+    case 'remove-account': {
+      const profile = data.accounts.find(entry => entry.id === id);
+      confirmDialog('Remove ' + profile.name + '?', 'This clears that account’s saved sign-in from Relay.', 'Remove', 'remove-account-confirmed', id);
+      break;
+    }
     case 'start-signin': await beginSignIn(); break;
     case 'copy-code': await api.copyCode(authCode?.userCode); toast('Code copied'); break;
     case 'open-code': await api.openCode(); break;
-    case 'signout':
-      await api.signOut();
-      if (modal.open) modal.close();
+    case 'remove-account-confirmed':
+      await api.removeAccount(id);
+      modal.close();
       await refresh();
-      toast('Signed out');
+      if (data.accounts.length) showAccounts();
       break;
     case 'project': await projectDialog(id, page === 'discover' ? discover.instance : ''); break;
     case 'open-modrinth': await api.open('https://modrinth.com/' + id); break;
-    case 'install-content': {
-      if (installingContent) return;
-      const version = $('#project-version', modal);
-      const target = $('#install-target', modal);
-      installingContent = true;
-      version.disabled = true;
-      if (target) target.disabled = true;
-      control.disabled = true;
-      try {
-        const result = await api.installProject(id, version.value, target?.value);
-        await refresh(false);
-        if (page === 'discover') {
-          const compatible = $('#compatible');
-          if (compatible) compatible.innerHTML = option('', 'All versions', discover.instance) +
-            data.instances.map(item => option(item.id, item.name, discover.instance)).join('');
-        } else if (page === 'library' || page === 'instance') {
-          render();
-        }
-        toast('Installed ' + result.name);
-      } finally {
-        installingContent = false;
-        version.disabled = false;
-        if (target) target.disabled = false;
-        $('#project-version', modal)?.dispatchEvent(new Event('change'));
-      }
-      break;
-    }
+    case 'install-content': await installContent(id, $('#project-version', modal).value, $('#install-target', modal)?.value || ''); break;
+    case 'quick-install': await installContent(id, null, control.dataset.type === 'modpack' ? '' : discover.instance); break;
     case 'remove-content': {
       const entry = itemById(activeItem).content.find(entry => entry.project === id);
       const message = entry.shared ? 'This removes the downloaded file from all instances using the shared folder.' :
@@ -872,12 +939,9 @@ api.onEvent(event => {
     }
   }
   if (event.type === 'catalog-progress') {
-    contentProgress = event.message;
-    for (const selector of ['#catalog-progress', '#modal-catalog-progress']) {
-      const node = $(selector);
-      if (node) node.innerHTML = progressHtml(event.message);
-    }
-    $('#project-version', modal)?.dispatchEvent(new Event('change'));
+    if (event.finished) downloads.delete(event.job.id);
+    else downloads.set(event.job.id, event.job);
+    refreshDownloads();
   }
   if (event.type === 'game-start' || event.type === 'game-exit') {
     refresh(page !== 'settings').catch(error => toast(errorText(error), 'error'));
@@ -904,11 +968,11 @@ document.addEventListener('click', event => {
     applySavedTheme();
     navigate(control.dataset.page);
   }
-  if (control.id === 'account') showSignIn();
+  if (control.id === 'account') showAccounts();
   if (control.dataset.action) {
     action(control.dataset.action, control.dataset.id, control).catch(error => {
       control.disabled = false;
-      if (modal.open) modalError(error);
+      if (modal.open && control.closest('dialog') === modal) modalError(error);
       else if (signin.open) modalError(error, signin);
       else toast(errorText(error), 'error');
     });

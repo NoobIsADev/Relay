@@ -38,9 +38,9 @@ function emit(event) {
 function state() {
   const current = store.get();
   return {
-    settings: current.settings, account: auth.account(),
+    settings: current.settings, account: auth.account(), accounts: auth.accounts(),
     instances: current.instances.map(item => ({ ...item, content: contents(current, item) })),
-    appVersion: app.getVersion(), running: game.running(), update: updateStatus
+    appVersion: app.getVersion(), running: game.running(), downloads: catalog.active(), update: updateStatus
   };
 }
 
@@ -127,8 +127,8 @@ async function saveSettings(payload) {
   if (changedSharing || changedAccount) {
     await exclusive(async () => {
       if (changedSharing && game.running().length) throw new Error('Close Minecraft before changing shared folders.');
-      if (changedAccount) await auth.signOut();
-      await sharing.saveSettings(next);
+      if (changedAccount) auth.ensureIdle();
+      await catalog.commit(() => sharing.saveSettings(next));
     });
   } else {
     await sharing.saveSettings(next);
@@ -163,7 +163,7 @@ async function createInstance(payload) {
     created: Date.now(), lastPlayed: 0, content: []
   };
   await fs.mkdir(store.dir(item.id), { recursive: true });
-  await sharing.add(item);
+  await catalog.commit(() => sharing.add(item));
   return item;
 }
 
@@ -211,7 +211,7 @@ function update(event) {
 }
 
 function busyForUpdate() {
-  return doing || pendingSettings > 0 || openFileDialogs > 0 || game.running().length > 0 || auth.pending();
+  return doing || pendingSettings > 0 || openFileDialogs > 0 || game.running().length > 0 || auth.pending() || catalog.busy();
 }
 
 function scheduleUpdate() {
@@ -285,9 +285,10 @@ function register() {
       const error = await shell.openPath(dir);
       if (error) throw new Error('Relay could not open the instance folder.');
     },
-    'instance:delete': id => exclusive(async () => {
+    'instance:delete': id => exclusive(() => catalog.commit(async () => {
       store.instance(id);
       if (game.busy(id)) throw new Error('Close Minecraft before deleting this instance.');
+      if (catalog.active().some(job => job.instance === id)) throw new Error('Wait for this instance’s downloads to finish before deleting it.');
       const folder = store.dir(id);
       const trash = folder + '.removed';
       const exists = await fs.rename(folder, trash).then(() => true, error => {
@@ -302,20 +303,21 @@ function register() {
       }
       // The folder is moved to the OS recycle bin after the library entry is committed.
       if (exists) await shell.trashItem(trash).catch(() => {});
-    }),
+    })),
     'game:install': (id, repair) => exclusive(() => game.perform(id, null, Boolean(repair))),
-    'game:play': id => exclusive(async () => game.perform(id, await auth.login(false))),
+    'game:play': id => exclusive(async () => game.perform(id, await auth.login())),
     'game:stop': id => game.stop(id),
     'catalog:search': payload => search({ ...payload, item: payload.instance ? store.instance(payload.instance) : null }),
     'catalog:details': (slug, id) => details(slug, id ? store.instance(id) : null),
-    'catalog:install': (slug, version, id) => exclusive(() => {
+    'catalog:install': (slug, version, id) => {
+      if (updateStatus.state === 'installing') throw new Error('Relay is restarting to apply an update.');
       const item = id ? store.instance(id) : null;
-      if (item && game.busy(item.id)) throw new Error('Close Minecraft before installing content into this instance.');
       return catalog.install(slug, version, item);
-    }),
-    'catalog:remove': (id, project) => exclusive(() => removeContent(id, project)),
-    'account:sign-in': async () => (await auth.login(true)).account,
-    'account:sign-out': () => auth.signOut(),
+    },
+    'catalog:remove': (id, project) => exclusive(() => catalog.commit(() => removeContent(id, project))),
+    'account:sign-in': id => auth.signIn(id),
+    'account:select': id => auth.select(id),
+    'account:remove': id => auth.remove(id),
     'account:browser': () => auth.openCode(),
     'account:copy': code => {
       if (typeof code !== 'string' || !/^[A-Z\d-]{4,20}$/i.test(code)) throw new Error('No active device code.');
@@ -367,7 +369,7 @@ function createWindow() {
       closeAfterSettings = true;
       return;
     }
-    if (!doing) {
+    if (!doing && !catalog.busy()) {
       if (busyForUpdate()) autoUpdater.autoInstallOnAppQuit = false;
       return;
     }
@@ -392,6 +394,7 @@ else {
     sharing = createSharing(root, store);
     await sharing.recover();
     auth = createAuth(root, store, emit);
+    await auth.migrate().catch(error => console.warn('Could not migrate the legacy Microsoft cache:', error.code));
     game = createGame(root, store, emit);
     catalog = createCatalog(root, store, emit, sharing);
     register();

@@ -49,9 +49,16 @@ function search({ query = '', type = 'mod', index = 'downloads', offset = 0, ite
 
 async function details(slug, item) {
   const project = await json('/project/' + key(slug));
+  return { project, versions: await versionsFor(project, item) };
+}
+
+function versionsFor(project, item) {
   const filters = options(item, project.project_type);
-  const versions = filters ? await json('/project/' + key(project.id) + '/version', filters) : [];
-  return { project, versions };
+  return filters ? json('/project/' + key(project.id) + '/version', filters) : [];
+}
+
+function preferredVersion(versions) {
+  return versions.find(version => version.version_type === 'release') || versions[0];
 }
 
 function primary(version) {
@@ -99,19 +106,40 @@ async function parallel(items, limit, task) {
   if (failure) throw failure;
 }
 
+function pool(limit) {
+  let active = 0;
+  const waiting = [];
+  return async task => {
+    if (active < limit) active++;
+    else await new Promise(resolve => waiting.push(resolve));
+    try {
+      return await task();
+    } finally {
+      const next = waiting.shift();
+      if (next) next();
+      else active--;
+    }
+  };
+}
+
 function createCatalog(root, store, send, sharing) {
-  async function installPack(project, version, pickedFile) {
+  const jobs = new Map();
+  const workOnInstall = pool(4);
+  const downloadFile = pool(12);
+  const commit = pool(1);
+  const fetchFile = (...args) => downloadFile(() => download(...args));
+
+  async function installPack(project, version, pickedFile, progress) {
     if (!pickedFile.filename.endsWith('.mrpack')) throw new Error('This version does not have a .mrpack download.');
     const id = randomUUID();
     const work = path.join(root, 'downloads', id);
     const game = path.join(work, 'game');
     const archive = path.join(work, 'download.mrpack');
     const dest = store.dir(id);
-    const progress = message => send({ type: 'catalog-progress', message });
     let moved = false;
     try {
       progress('Downloading ' + project.title);
-      await download(pickedFile.url, archive, { hosts: modrinthHosts, size: pickedFile.size, hashes: pickedFile.hashes });
+      await fetchFile(pickedFile.url, archive, { hosts: modrinthHosts, size: pickedFile.size, hashes: pickedFile.hashes });
       let manifest;
       await visitZip(archive, async (zip, entry) => {
         if (entry.fileName !== 'modrinth.index.json') return;
@@ -147,7 +175,7 @@ function createCatalog(root, store, send, sharing) {
         let lastError = new Error('Missing modpack download source.');
         for (const url of file.downloads) {
           try {
-            await download(url, inside(game, file.path), { hosts: packHosts, size: file.fileSize, hashes: file.hashes });
+            await fetchFile(url, inside(game, file.path), { hosts: packHosts, size: file.fileSize, hashes: file.hashes });
             lastError = undefined;
             break;
           } catch (error) {
@@ -170,32 +198,37 @@ function createCatalog(root, store, send, sharing) {
           await pipeline(await entryStream(zip, entry), createWriteStream(target));
         });
       }
-      await fs.mkdir(path.dirname(dest), { recursive: true });
-      await fs.rename(game, dest);
-      moved = true;
       const item = {
         id, name: String(manifest.name || project.title).slice(0, 64), minecraft: gameVersion, loader, loaderVersion,
         accent: '', icon: project.icon_url || '', cover: project.gallery?.find(image => image.featured)?.url || '',
         ram: 0, java: '', created: Date.now(), lastPlayed: 0,
         modpack: { project: project.id, version: version.id }, content: []
       };
-      await sharing.add(item);
-      moved = false;
-      return item;
+      return await commit(async () => {
+        await fs.mkdir(path.dirname(dest), { recursive: true });
+        await fs.rename(game, dest);
+        moved = true;
+        await sharing.add(item);
+        moved = false;
+        return item;
+      });
     } finally {
       await fs.rm(work, { recursive: true, force: true });
       if (moved) await fs.rm(dest, { recursive: true, force: true });
-      progress('');
     }
   }
 
-  async function installProject(project, version, item) {
-    const currentContent = contents(store.get(), item);
+  async function installProject(project, version, item, progress) {
     const plans = new Map();
     const visited = new Set();
 
-    async function plan(current, release) {
-      if (visited.has(current.id)) return;
+    async function plan(current, release, compatible) {
+      if (visited.has(current.id)) {
+        if (compatible?.size === 1 && plans.has(current.id) && plans.get(current.id).version !== release.id) {
+          throw new Error('Two dependencies require different versions of ' + current.title + '.');
+        }
+        return;
+      }
       if (visited.size >= 45) throw new Error('Too many Modrinth dependencies.');
       visited.add(current.id);
       const type = current.project_type;
@@ -212,80 +245,124 @@ function createCatalog(root, store, send, sharing) {
         if (!depId) throw new Error('Missing required file ' + (dependency.file_name || 'listed by ' + current.title) + '.');
         const { project: dep, versions } = await details(depId, item);
         if (!pinned && !versions.length) throw new Error('No compatible version of ' + dep.title + ' is available.');
-        await plan(dep, pinned || versions.find(entry => entry.version_type === 'release') || versions[0]);
+        await plan(dep, pinned || preferredVersion(versions), new Set(pinned ? [pinned.id] : versions.map(entry => entry.id)));
       }
       const file = primary(release);
       const relative = types[type] + '/' + file.filename;
       if (/[\\/]/.test(file.filename) || !/\.(jar|zip|litemod)$/i.test(file.filename)) throw new Error('Unsupported Modrinth filename.');
-      const output = sharing.file(item, relative);
-      const conflict = currentContent.find(entry => entry.relative.toLowerCase() === relative.toLowerCase() && entry.project !== current.id);
-      if (conflict || [...plans.values()].some(entry => entry.relative.toLowerCase() === relative.toLowerCase())) {
+      if ([...plans.values()].some(entry => entry.relative.toLowerCase() === relative.toLowerCase())) {
         throw new Error('Two projects use the same filename.');
       }
-      plans.set(current.id, { project: current.id, name: current.title, version: release.id, versionName: release.version_number, icon: current.icon_url || '', relative, output, file });
+      plans.set(current.id, { project: current.id, name: current.title, version: release.id, versionName: release.version_number, icon: current.icon_url || '', relative, compatible, file });
     }
 
     await plan(project, version);
     const pending = [...plans.values()];
     const staged = path.join(root, 'downloads', randomUUID());
-    const replace = [];
     try {
       await fs.mkdir(staged, { recursive: true });
+      let downloaded = 0;
+      progress('Downloading files');
+      await parallel(pending, 4, async entry => {
+        entry.temp = path.join(staged, 'new-' + entry.project);
+        await fetchFile(entry.file.url, entry.temp, { hosts: modrinthHosts, size: entry.file.size, hashes: entry.file.hashes });
+        progress('Downloaded ' + ++downloaded + ' / ' + pending.length + ' files');
+      });
+      return await commit(() => commitProject(project, item, pending, staged, progress));
+    } finally {
+      await fs.rm(staged, { recursive: true, force: true });
+    }
+  }
+
+  async function commitProject(project, item, pending, staged, progress) {
+    const currentItem = store.instance(item.id);
+    const currentContent = contents(store.get(), currentItem);
+    const replace = [];
+    const changed = [];
+    progress('Installing files');
+    try {
       for (const [index, entry] of pending.entries()) {
-        send({ type: 'catalog-progress', message: 'Downloading ' + entry.name });
-        entry.temp = path.join(staged, String(index));
-        await download(entry.file.url, entry.temp, { hosts: modrinthHosts, size: entry.file.size, hashes: entry.file.hashes });
-      }
-      for (const [index, entry] of pending.entries()) {
+        const output = sharing.file(currentItem, entry.relative);
         const existing = currentContent.find(previous => previous.project === entry.project);
-        const old = existing ? sharing.file(item, existing.relative) : entry.output;
+        const old = existing ? sharing.file(currentItem, existing.relative) : output;
+        if (existing && (entry.version === existing.version || entry.compatible?.has(existing.version)) &&
+            await fs.access(old).then(() => true, () => false)) continue;
+        if (existing && entry.compatible && !entry.compatible.has(existing.version)) {
+          throw new Error(project.title + ' requires a different version of ' + entry.name + '. Change that dependency first.');
+        }
+        if (currentContent.some(other => other.project !== entry.project &&
+            other.relative.toLowerCase() === entry.relative.toLowerCase())) {
+          throw new Error('Two projects use the same filename.');
+        }
         const backup = path.join(staged, 'previous-' + index);
-        await fs.mkdir(path.dirname(entry.output), { recursive: true });
-        const exists = await fs.access(entry.output).then(() => true, () => false);
-        if (exists && (!existing || old.toLowerCase() !== entry.output.toLowerCase())) {
-          throw new Error('A file named ' + path.basename(entry.output) + ' already exists in the destination folder.');
+        await fs.mkdir(path.dirname(output), { recursive: true });
+        const exists = await fs.access(output).then(() => true, () => false);
+        if (exists && (!existing || old.toLowerCase() !== output.toLowerCase())) {
+          throw new Error('A file named ' + path.basename(output) + ' already exists in the destination folder.');
         }
         const hadOld = await fs.rename(old, backup).then(() => true, error => {
           if (error.code === 'ENOENT') return false;
           throw error;
         });
-        const replacement = { old, backup, output: entry.output, hadOld, placed: false };
+        const replacement = { old, backup, output, hadOld, placed: false };
         replace.push(replacement);
-        await fs.rename(entry.temp, entry.output);
+        await fs.rename(entry.temp, output);
         replacement.placed = true;
+        changed.push(entry);
       }
+      const changedProjects = new Set(changed.map(entry => entry.project));
       await store.change(state => {
         const target = state.instances.find(value => value.id === item.id);
-        target.content = (target.content || []).filter(entry => !plans.has(entry.project));
-        state.sharedContent = state.sharedContent.filter(entry => !plans.has(entry.project));
-        for (const { project, name, version, versionName, icon, relative } of pending) {
+        target.content = (target.content || []).filter(entry => !changedProjects.has(entry.project));
+        state.sharedContent = state.sharedContent.filter(entry => !changedProjects.has(entry.project));
+        for (const { project, name, version, versionName, icon, relative } of changed) {
           const list = isShared(state.settings, folderOf(relative)) ? state.sharedContent : target.content;
           list.push({ project, name, version, versionName, icon, relative });
         }
       });
-      return { name: project.title, total: pending.length };
+      return { name: project.title, total: changed.length };
     } catch (error) {
       for (const swap of replace.reverse()) {
         if (swap.placed) await fs.rm(swap.output, { force: true });
         if (swap.hadOld) await fs.rename(swap.backup, swap.old);
       }
+      if (['EBUSY', 'EPERM', 'EACCES'].includes(error.code)) {
+        throw new Error('Relay could not replace a file in use. Close the game and try this update again.');
+      }
       throw error;
-    } finally {
-      await fs.rm(staged, { recursive: true, force: true });
-      send({ type: 'catalog-progress', message: '' });
     }
   }
 
   async function install(slug, versionId, item) {
-    const project = await json('/project/' + key(slug));
-    const version = await json('/version/' + key(versionId));
-    if (version.project_id !== project.id) throw new Error('This version belongs to another Modrinth project.');
-    if (project.project_type === 'modpack') return installPack(project, version, primary(version));
-    if (!item) throw new Error('Choose an instance to install into.');
-    return installProject(project, version, item);
+    const projectKey = key(slug);
+    const id = (item?.id || '') + '/' + projectKey;
+    if (jobs.has(id)) throw new Error('This project is already downloading for this instance.');
+    const job = { id, project: projectKey, instance: item?.id || '', title: '', message: '' };
+    const progress = message => {
+      job.message = message;
+      send({ type: 'catalog-progress', job: { ...job } });
+    };
+    jobs.set(id, job);
+    progress('Waiting to download');
+    try {
+      return await workOnInstall(async () => {
+        progress('Finding a compatible version');
+        const project = await json('/project/' + projectKey);
+        job.title = project.title;
+        const version = versionId ? await json('/version/' + key(versionId)) : preferredVersion(await versionsFor(project, item));
+        if (!version) throw new Error('No compatible version is available for this instance.');
+        if (version.project_id !== project.id) throw new Error('This version belongs to another Modrinth project.');
+        if (project.project_type === 'modpack') return installPack(project, version, primary(version), progress);
+        if (!item) throw new Error('Choose an instance to install into.');
+        return installProject(project, version, item, progress);
+      });
+    } finally {
+      jobs.delete(id);
+      send({ type: 'catalog-progress', job: { ...job }, finished: true });
+    }
   }
 
-  return { install };
+  return { install, commit, active: () => [...jobs.values()].map(job => ({ ...job })), busy: () => jobs.size > 0 };
 }
 
 module.exports = { createCatalog, details, search };

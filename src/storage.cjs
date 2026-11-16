@@ -49,6 +49,8 @@ async function openStore(root) {
   let state = {
     settings: { ...defaults, ...stored.settings, shared: { ...defaults.shared, ...stored.settings?.shared } },
     instances: stored.instances || [], account: stored.account || null,
+    accounts: stored.accounts || (stored.account ? [stored.account] : []),
+    activeAccountId: stored.activeAccountId || stored.account?.id || null,
     sharedContent: stored.sharedContent || [], sharingCommit: stored.sharingCommit || ''
   };
   let saving = Promise.resolve();

@@ -82,7 +82,7 @@ h3{font-size:15px;font-weight:740;letter-spacing:-.02em}
 .section{margin-top:24px}
 .section>.split{margin-bottom:10px}
 .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:11px}
-.tile,.panel,.project{border:1px solid var(--line);border-radius:11px;background:var(--panel);box-shadow:var(--shadow);min-width:0}
+.tile,.panel,.project,.project-tile{border:1px solid var(--line);border-radius:11px;background:var(--panel);box-shadow:var(--shadow);min-width:0}
 .tile{overflow:hidden}
 .tile-top{border:0;display:flex;gap:10px;align-items:center;text-align:left;width:100%;padding:12px}
 .tile-top:hover{background:var(--accent-soft)}
@@ -107,6 +107,11 @@ h3{font-size:15px;font-weight:740;letter-spacing:-.02em}
 .project .row{flex-wrap:nowrap;min-width:0}
 .project .desc{color:var(--muted);font-size:12px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-top:1px}
 .project .stats{display:flex;align-items:center;gap:5px;color:var(--muted);font-size:11px;margin-top:auto}
+.project-tile{display:flex;flex-direction:column;overflow:hidden}
+.project-tile>.project{flex:1;border:0;border-radius:0;box-shadow:none}
+.project-actions{display:flex;justify-content:flex-end;padding:0 10px 10px}
+.project-actions .button{min-height:31px;font-size:12px}
+#catalog-progress:not(:empty){display:grid;gap:6px;margin-bottom:12px}
 .stats .icon{width:13px;height:13px}
 .controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:13px}
 .controls .query{flex:1;min-width:175px}
@@ -126,6 +131,11 @@ select{max-width:100%}
 .settings-form{margin-bottom:14px}
 .settings-status{margin:0;color:var(--muted);font-size:12px;text-align:right;max-width:34ch}
 .settings-status.error{color:var(--danger)}
+.accounts-list{display:grid;gap:7px}
+.account-row{display:flex;align-items:center;gap:9px;padding:8px;border:1px solid var(--line);border-radius:8px}
+.account-row strong{overflow-wrap:anywhere}
+.account-actions{margin-left:auto;flex:none;gap:2px}
+.account-actions .button{font-size:12px;min-height:32px}
 .fields{display:grid;gap:11px}
 .field{display:grid;gap:4px;min-width:0;font-weight:650;font-size:13px}
 .field input,.field select{font-weight:470;width:100%;min-width:0}
