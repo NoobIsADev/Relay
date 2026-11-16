@@ -17,8 +17,7 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid 
 button{border:0;background:transparent}
 button[data-icon],.icon{display:inline-block;flex:none;width:18px;height:18px;background:currentColor;mask:var(--icon) center/contain no-repeat;vertical-align:middle}
 .titlebar{height:50px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line);background:var(--glass);-webkit-app-region:drag;user-select:none}
-.wordmark{margin-left:20px;display:flex;align-items:center;gap:7px;letter-spacing:-.045em;font-size:22px}
-.wordmark img{width:34px;height:34px;object-fit:contain}
+.wordmark{margin-left:20px;letter-spacing:-.045em;font-size:22px}
 .window-actions{height:100%;display:flex;-webkit-app-region:no-drag}
 .window-actions button{width:47px;display:grid;place-items:center;color:var(--muted)}
 .window-actions button:hover{background:var(--line);color:var(--text)}
@@ -44,7 +43,8 @@ button[data-icon],.icon{display:inline-block;flex:none;width:18px;height:18px;ba
 .account:hover{background:var(--panel)}
 .account strong,.account small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .account strong{font-size:12px}.account small{font-size:11px;color:var(--muted)}
-.avatar{display:grid;place-items:center;width:32px;height:32px;border-radius:9px;background:var(--accent-soft);color:var(--accent);font-weight:720;flex:none}
+.avatar{display:grid;place-items:center;width:32px;height:32px;border-radius:9px;overflow:hidden;background:var(--accent-soft);color:var(--accent);flex:none}
+.avatar img{width:100%;height:100%;image-rendering:pixelated}
 .rail-meta{display:flex;gap:7px;align-items:center;padding:6px 9px;color:var(--dim);font-size:11px;text-align:left}
 .rail-meta:hover{color:var(--accent)}.rail-meta .icon{width:13px;height:13px}
 main{overflow:auto;scrollbar-color:var(--line) transparent;outline:none}

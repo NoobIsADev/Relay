@@ -9,6 +9,7 @@ const { createAuth } = require('./auth.cjs');
 const { createGame, loaderNames, loaders, titles } = require('./game.cjs');
 const { createCatalog, details, search } = require('./catalog.cjs');
 const { contents, createSharing, sharedFolders } = require('./sharing.cjs');
+const { getJson } = require('./network.cjs');
 
 const ui = path.join(__dirname, 'index.html');
 const uiUrl = pathToFileURL(ui).href;
@@ -42,6 +43,18 @@ function state() {
     instances: current.instances.map(item => ({ ...item, content: contents(current, item) })),
     appVersion: app.getVersion(), running: game.running(), downloads: catalog.active(), update: updateStatus
   };
+}
+
+async function accountSkin(id) {
+  if (typeof id !== 'string' || !/^[a-f0-9]{32}$/i.test(id) ||
+      !auth.accounts().some(account => account.id === id)) return '';
+  const profileUrl = 'https://sessionserver.mojang.com/session/minecraft/profile/' + id.toLowerCase();
+  const profile = await getJson(profileUrl, { cache: 300000 });
+  const property = profile.properties?.find(entry => entry.name === 'textures');
+  if (!property) return '';
+  const { textures } = JSON.parse(Buffer.from(property.value, 'base64').toString('utf8'));
+  const texture = /^https?:\/\/textures\.minecraft\.net\/texture\/([a-f0-9]{32,64})$/i.exec(textures?.SKIN?.url);
+  return texture ? 'https://textures.minecraft.net/texture/' + texture[1] : '';
 }
 
 async function exclusive(fn) {
@@ -318,6 +331,7 @@ function register() {
     'account:sign-in': id => auth.signIn(id),
     'account:select': id => auth.select(id),
     'account:remove': id => auth.remove(id),
+    'account:skin': accountSkin,
     'account:browser': () => auth.openCode(),
     'account:copy': code => {
       if (typeof code !== 'string' || !/^[A-Z\d-]{4,20}$/i.test(code)) throw new Error('No active device code.');

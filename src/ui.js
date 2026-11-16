@@ -31,6 +31,7 @@ let authCode;
 let authError = '';
 let authTarget = '';
 let projectSequence = 0;
+const accountHeads = new Map();
 const pendingPreferences = new Map();
 let preferenceError = '';
 let preferencesSaved = false;
@@ -189,10 +190,60 @@ function refreshInstanceRail() {
   rail.scrollTop = scrollTop;
   if (focused) Array.from(rail.children).find(button => button.dataset.id === focused)?.focus({ preventScroll: true });
 }
+function accountAvatar(profile) {
+  const skin = profile ? ' data-account-skin="' + esc(profile.id) + '"' : '';
+  return '<span class="avatar" aria-hidden="true"' + skin + '>' + svg('user-round') + '</span>';
+}
+
+async function loadAccountHead(id) {
+  const url = await api.accountSkin(id);
+  if (!url) return '';
+  const texture = new Image();
+  texture.crossOrigin = 'anonymous';
+  texture.src = url;
+  await texture.decode();
+  const { naturalWidth: width, naturalHeight: height } = texture;
+  if (width !== 64 || ![32, 64].includes(height)) return '';
+
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+  let hasHat = true;
+  if (height === 32) {
+    // Minecraft treats a fully opaque legacy hat region as empty.
+    context.drawImage(texture, 32, 0, 32, 32, 0, 0, 32, 32);
+    const pixels = context.getImageData(0, 0, 32, 32).data;
+    hasHat = pixels.some((value, index) => index % 4 === 3 && value < 128);
+  }
+  canvas.width = canvas.height = 8;
+  context.drawImage(texture, 8, 8, 8, 8, 0, 0, 8, 8);
+  if (hasHat) context.drawImage(texture, 40, 8, 8, 8, 0, 0, 8, 8);
+  return canvas.toDataURL();
+}
+
+function showAccountHeads(container) {
+  for (const avatar of container.querySelectorAll('[data-account-skin]')) {
+    const id = avatar.dataset.accountSkin;
+    let head = accountHeads.get(id);
+    if (!head || head.expires <= Date.now()) {
+      head = { expires: Date.now() + 300000, image: loadAccountHead(id).catch(() => '') };
+      accountHeads.set(id, head);
+    }
+    head.image.then(url => {
+      if (!url || !avatar.isConnected) return;
+      const image = new Image();
+      image.alt = '';
+      image.src = url;
+      avatar.replaceChildren(image);
+    });
+  }
+}
+
 function refreshChrome() {
   const account = data.account;
-  $('#account').innerHTML = '<span class="avatar">' + (account ? esc(account.name.slice(0, 2).toUpperCase()) : svg('user-round')) +
-    '</span><span class="truncate"><strong>' + esc(account?.name || 'Sign in') + '</strong><small>Microsoft account</small></span>';
+  const accountButton = $('#account');
+  accountButton.innerHTML = accountAvatar(account) +
+    '<span class="truncate"><strong>' + esc(account?.name || 'Sign in') + '</strong><small>Microsoft account</small></span>';
+  showAccountHeads(accountButton);
   const updating = ['ready', 'scheduled', 'installing'].includes(data.update?.state);
   const updateButton = $('#rail-update');
   updateButton.innerHTML = svg(updating ? 'arrow-down-to-line' : 'refresh-cw') +
@@ -648,13 +699,14 @@ function showAccounts() {
   if (!data.accounts.length) return openSignIn('');
   showDialog('Microsoft accounts', '<div class="accounts-list">' + data.accounts.map(profile => {
     const selected = data.account?.id === profile.id;
-    return '<div class="account-row"><span class="avatar">' + esc(profile.name.slice(0, 2).toUpperCase()) +
-      '</span><div class="truncate"><strong>' + esc(profile.name) + '</strong>' +
+    return '<div class="account-row">' + accountAvatar(profile) +
+      '<div class="truncate"><strong>' + esc(profile.name) + '</strong>' +
       (selected ? '<p class="tile-note">Active account</p>' : '') + '</div><div class="row account-actions">' +
       (selected ? '' : button('Use account', 'check', 'select-account', { id: profile.id })) +
       iconButton('Sign in again as ' + profile.name, 'refresh-cw', 'reconnect-account', profile.id) +
       iconButton('Remove ' + profile.name, 'trash-2', 'remove-account', profile.id) + '</div></div>';
   }).join('') + '</div>', button('Add account', 'plus', 'add-account', { style: 'primary' }));
+  showAccountHeads(modal);
 }
 function openSignIn(id) {
   if (authBusy) return showSignIn();

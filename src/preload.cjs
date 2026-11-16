@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('relay', {
   signIn: id => invoke('account:sign-in', id),
   selectAccount: id => invoke('account:select', id),
   removeAccount: id => invoke('account:remove', id),
+  accountSkin: id => invoke('account:skin', id),
   openCode: () => invoke('account:browser'),
   copyCode: code => invoke('account:copy', code),
   settings: data => invoke('settings:save', data),
