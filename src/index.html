@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://cdn.modrinth.com; font-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Relay</title>
+  <link rel="stylesheet" href="style.css">
+  <script defer src="ui.js"></script>
+</head>
+<body>
+  <header class="titlebar">
+    <div class="wordmark"><img src="../assets/logo.png" alt=""><strong>Relay</strong></div>
+    <div class="window-actions" aria-label="Window controls">
+      <button data-window="minimize" aria-label="Minimize"></button>
+      <button data-window="maximize" aria-label="Maximize or restore"></button>
+      <button data-window="close" aria-label="Close"></button>
+    </div>
+  </header>
+  <div class="frame">
+    <aside class="rail">
+      <nav aria-label="Main navigation">
+        <button data-page="library"><span data-icon="layout-grid"></span>Library</button>
+        <button data-page="discover"><span data-icon="compass"></span>Discover</button>
+        <button data-page="settings"><span data-icon="settings"></span>Settings</button>
+      </nav>
+      <div class="rail-bottom">
+        <button class="account" id="account"></button>
+        <button class="rail-meta" data-action="check-update" id="rail-update"></button>
+      </div>
+    </aside>
+    <main id="main" tabindex="-1" aria-busy="true"><p class="loading">Opening Relay…</p></main>
+  </div>
+  <div id="toasts" role="status" aria-live="polite"></div>
+  <dialog id="modal"></dialog>
+  <dialog id="signin"></dialog>
+</body>
+</html>

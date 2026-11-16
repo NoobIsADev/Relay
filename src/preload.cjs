@@ -1,0 +1,32 @@
+const { contextBridge, ipcRenderer } = require('electron');
+const invoke = (channel, ...args) => ipcRenderer.invoke('relay:' + channel, ...args);
+
+contextBridge.exposeInMainWorld('relay', {
+  state: () => invoke('state'),
+  versions: () => invoke('versions'),
+  loaders: (loader, minecraft) => invoke('loaders', loader, minecraft),
+  create: data => invoke('instance:create', data),
+  edit: (id, data) => invoke('instance:edit', id, data),
+  folder: id => invoke('instance:folder', id),
+  delete: id => invoke('instance:delete', id),
+  installGame: (id, repair) => invoke('game:install', id, repair),
+  play: id => invoke('game:play', id),
+  stop: id => invoke('game:stop', id),
+  search: data => invoke('catalog:search', data),
+  project: (slug, id) => invoke('catalog:details', slug, id),
+  installProject: (slug, version, id) => invoke('catalog:install', slug, version, id),
+  removeProject: (id, project) => invoke('catalog:remove', id, project),
+  signIn: () => invoke('account:sign-in'),
+  signOut: () => invoke('account:sign-out'),
+  openCode: () => invoke('account:browser'),
+  copyCode: code => invoke('account:copy', code),
+  settings: data => invoke('settings:save', data),
+  java: () => invoke('settings:java'),
+  checkUpdates: () => invoke('updates:check'),
+  applyUpdate: () => invoke('updates:install'),
+  window: action => invoke('window:action', action),
+  open: url => invoke('open:link', url),
+  onEvent(listener) {
+    ipcRenderer.on('relay:event', (_event, data) => listener(data));
+  }
+});

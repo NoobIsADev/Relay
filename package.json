@@ -1,0 +1,69 @@
+{
+  "name": "relay-minecraft-launcher",
+  "productName": "Relay",
+  "version": "0.1.0",
+  "description": "A customizable Minecraft: Java Edition launcher for Windows",
+  "author": "NoobIsADev",
+  "private": true,
+  "main": "src/main.cjs",
+  "repository": "https://github.com/NoobIsADev/Relay.git",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "start": "electron .",
+    "check": "node scripts/check.cjs",
+    "dist": "electron-builder --win nsis --x64 --publish never",
+    "release": "node scripts/release.cjs"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "5.3.0",
+    "@xmcl/core": "2.16.3",
+    "@xmcl/installer": "6.3.7",
+    "electron-updater": "6.8.11",
+    "prismarine-auth": "3.1.1",
+    "yauzl": "3.4.0"
+  },
+  "devDependencies": {
+    "electron": "45.3.3",
+    "electron-builder": "26.18.0",
+    "lucide-static": "1.73.0"
+  },
+  "build": {
+    "appId": "dev.noobisadev.relay",
+    "productName": "Relay",
+    "artifactName": "Relay-Setup-${version}.${ext}",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json",
+      "!**/*.map"
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "NoobIsADev",
+        "repo": "Relay",
+        "releaseType": "release"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/relay.ico",
+      "signExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "assets/relay.ico",
+      "uninstallerIcon": "assets/relay.ico"
+    }
+  },
+  "overrides": {
+    "@xmcl/unzip": "2.1.2",
+    "uuid": "11.1.1"
+  }
+}
