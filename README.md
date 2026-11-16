@@ -36,6 +36,8 @@ Run `PUSH-AND-RELEASE.bat` on Windows from the repository’s `main` checkout. T
 
 Installed Windows copies and AppImages check GitHub Releases at startup and periodically. A downloaded release can be installed from the launcher, or it installs on normal exit. Keep the AppImage in a writable folder so Relay can replace it during an update. The Windows installer is unsigned.
 
+If Linux reports that FUSE is unavailable, run the AppImage with `APPIMAGE_EXTRACT_AND_RUN=1` in the environment.
+
 Relay stores its library under `%APPDATA%\Relay` on Windows and `${XDG_CONFIG_HOME:-$HOME/.config}/Relay` on Linux. Relay is an independent launcher and is unaffiliated with Mojang, Microsoft, and Modrinth.
 
 ## Artwork

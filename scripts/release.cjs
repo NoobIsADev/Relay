@@ -2,6 +2,7 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
+const { setTimeout: delay } = require('node:timers/promises');
 
 const root = path.join(__dirname, '..');
 const repo = 'NoobIsADev/Relay';
@@ -59,17 +60,24 @@ function verifyUpdateFiles(directory, version, artifact, channel) {
   }
 }
 
-function buildLinux(tag, head, version, dist) {
+async function buildLinux(tag, head, version, dist) {
   const trigger = 'repos/' + repo + '/actions/workflows/build-linux.yml/dispatches';
   const run = JSON.parse(ghValue('api', '--method', 'POST', trigger, '-H', 'X-GitHub-Api-Version: 2026-03-10',
     '-f', 'ref=' + tag, '-F', 'return_run_details=true'));
   const id = String(run.workflow_run_id);
   if (!/^\d+$/.test(id)) throw new Error('GitHub did not return the Linux build ID.');
   console.log('Building Linux AppImage on GitHub Actions: ' + run.html_url);
-  gh('run', 'watch', id, '-R', repo, '--interval', '10', '--exit-status');
-  if (ghValue('run', 'view', id, '-R', repo, '--json', 'headSha', '--jq', '.headSha') !== head) {
-    throw new Error('The AppImage was built from a different commit.');
+  for (let attempt = 0; ; attempt++) {
+    const check = command('gh', ['run', 'view', id, '-R', repo, '--json', 'headSha', '--jq', '.headSha'],
+      { capture: true, allowFailure: true });
+    if (check.status === 0) {
+      if (check.stdout.trim() !== head) throw new Error('The AppImage was built from a different commit.');
+      break;
+    }
+    if (attempt >= 5 || !/HTTP 404/i.test(check.stderr)) throw new Error(check.stderr.trim());
+    await delay(3000);
   }
+  gh('run', 'watch', id, '-R', repo, '--interval', '10', '--exit-status');
 
   const image = 'Relay-' + version + '-x86_64.AppImage';
   const channel = 'latest-linux.yml';
@@ -84,7 +92,7 @@ function buildLinux(tag, head, version, dist) {
   return [image, channel];
 }
 
-function publish() {
+async function publish() {
   if (!process.env.npm_execpath) throw new Error('Run PUSH-AND-RELEASE.bat or npm run release.');
   const args = process.argv.slice(2);
   const dryRun = args.includes('--dry-run');
@@ -145,7 +153,7 @@ function publish() {
     if (!remoteTag) git('-c', 'credential.helper=', '-c', 'credential.helper=!gh auth git-credential',
       'push', 'origin', head + ':refs/tags/' + tag);
   }
-  const linux = buildLinux(tag, head, version, dist);
+  const linux = await buildLinux(tag, head, version, dist);
   const artifacts = [...windows, ...linux].map(name => path.join(dist, name));
   if (!existing) gh('release', 'create', tag, '-R', repo, '--verify-tag', '--draft', '--title', 'Relay ' + version, '--generate-notes');
   gh('release', 'upload', tag, ...artifacts, '-R', repo, '--clobber');
@@ -153,9 +161,7 @@ function publish() {
   console.log('Published https://github.com/' + repo + '/releases/tag/' + tag);
 }
 
-try {
-  publish();
-} catch (error) {
+publish().catch(error => {
   console.error(error.message);
   process.exitCode = 1;
-}
+});
