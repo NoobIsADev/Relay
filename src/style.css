@@ -147,7 +147,9 @@ dialog::backdrop{background:#07172f69;backdrop-filter:blur(3px)}
 .dialog-actions{justify-content:flex-end;margin-top:15px}
 .dialog-body .field{margin-bottom:9px}
 .code{display:block;background:var(--accent-soft);color:var(--accent);font:750 26px/1.4 ui-monospace,monospace;letter-spacing:.1em;text-align:center;border-radius:9px;padding:10px;margin:12px 0;user-select:all}
-.detail-banner{height:110px;margin:-20px -20px 16px;background:var(--cover) center/cover}
+.dialog-project-heading{display:flex;align-items:center;gap:10px;min-width:0}
+.dialog-project-heading h2{overflow-wrap:anywhere}
+.dialog-project-heading .sub{font-size:11px;margin-top:3px}
 .detail-logo{width:56px;height:56px}
 .detail-text{margin:10px 0 14px;color:var(--muted);overflow-wrap:anywhere}
 .project-install-result{margin:8px 0;color:var(--accent);font-size:12px;font-weight:650}

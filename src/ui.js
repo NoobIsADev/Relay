@@ -161,9 +161,10 @@ function modalError(error, within = modal) {
   target.textContent = errorText(error);
   target.hidden = false;
 }
-function showDialog(title, body, footer = '', sub = '') {
-  modal.innerHTML = '<div class="dialog-inner"><div class="dialog-head split"><div><h2>' + esc(title) +
-    '</h2>' + (sub ? '<p class="sub">' + esc(sub) + '</p>' : '') + '</div>' + iconButton('Close dialog', 'x', 'close-dialog') +
+function showDialog(title, body, footer = '', sub = '', artwork = '') {
+  const name = '<div><h2 id="modal-title">' + esc(title) + '</h2>' + (sub ? '<p class="sub">' + esc(sub) + '</p>' : '') + '</div>';
+  const heading = artwork ? '<div class="dialog-project-heading">' + artwork + name + '</div>' : name;
+  modal.innerHTML = '<div class="dialog-inner"><div class="dialog-head split">' + heading + iconButton('Close dialog', 'x', 'close-dialog') +
     '</div><div class="dialog-body">' + body + '</div><p class="error-text" hidden></p>' +
     (footer ? '<div class="dialog-actions row">' + footer + '</div>' : '') + '</div>';
   if (!modal.open) modal.showModal();
@@ -678,7 +679,6 @@ async function projectDialog(slug, target = discover.instance) {
   try {
     const { project, versions } = await api.project(slug, target);
     if (!modal.open || sequence !== projectSequence) return;
-    const gallery = project.gallery?.find(entry => entry.featured) || project.gallery?.[0];
     const isPack = project.project_type === 'modpack';
     const selected = versions.find(version => version.version_type === 'release') || versions[0];
     const instanceSelect = isPack ? '<p class="hint">This modpack creates its own instance.</p>' :
@@ -687,17 +687,14 @@ async function projectDialog(slug, target = discover.instance) {
     const versionSelect = selected ? field('Content version', '<select id="project-version">' + versions.map(version =>
       option(version.id, version.version_number + ' · ' + version.game_versions.slice(0, 3).join(', '), selected.id)).join('') + '</select>') :
       '<p class="hint">No compatible versions are available for this instance.</p>';
-    showDialog(project.title, (gallery && source(gallery.url) ? '<div class="detail-banner"' + cover(gallery.url) + '></div>' : '') +
-      '<div class="row">' + image(project.icon_url, 'package', 'project-icon detail-logo') + '<div><strong>' +
-      esc(categoryNames[project.project_type]) + '</strong><p class="tile-note">' + count.format(project.downloads || 0) + ' downloads</p></div></div>' +
-      '<p class="detail-text">' + esc(project.description) + '</p>' + instanceSelect + versionSelect +
+    showDialog(project.title, '<p class="detail-text">' + esc(project.description) + '</p>' + instanceSelect + versionSelect +
       '<div class="row project-install-result" hidden><span role="status"></span>' +
       button('Open instance', 'arrow-up-right', 'installed-instance') + '</div>' +
       '<div id="modal-catalog-progress">' + progressHtml(contentProgress) + '</div>',
       button('View on Modrinth', 'external-link', 'open-modrinth', { id: project.project_type + '/' + project.slug }) +
       button(isPack ? 'Install modpack' : 'Install', 'download', 'install-content', {
         id: project.id, style: 'primary', disabled: !selected || (!isPack && !target) || Boolean(contentProgress)
-      }));
+      }), count.format(project.downloads || 0) + ' downloads', image(project.icon_url, 'package', 'project-icon detail-logo'));
     const select = $('#install-target', modal);
     if (select) select.onchange = () => projectDialog(slug, select.value);
     const version = $('#project-version', modal);
