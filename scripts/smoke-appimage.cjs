@@ -4,6 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { tmpdir } = require('node:os');
 const { randomUUID } = require('node:crypto');
+const { setTimeout: delay } = require('node:timers/promises');
 
 async function testJava(root) {
   const { openStore } = require('../src/storage.cjs');
@@ -36,7 +37,7 @@ async function testAppImage(root, file) {
     env: { ...process.env, APPIMAGE_EXTRACT_AND_RUN: '1', XDG_CACHE_HOME: path.join(root, 'cache'),
       XDG_CONFIG_HOME: path.join(root, 'config') }
   });
-  let closed = false;
+  let applying = false;
   try {
     const page = await app.firstWindow({ timeout: 30000 });
     await page.getByRole('heading', { name: 'Your library' }).waitFor();
@@ -70,15 +71,24 @@ async function testAppImage(root, file) {
       await page.getByText(/will install when Minecraft and current tasks finish/).waitFor({ timeout: 120000 });
       console.log('Update downloaded and waiting for the file picker.');
       assert.equal((await fs.stat(file)).mtimeMs, 1000);
-      const restarted = app.waitForEvent('close', { timeout: 45000 });
       await app.evaluate(() => globalThis.finishPicker());
-      await restarted;
-      closed = true;
-      assert.ok((await fs.stat(file)).mtimeMs > 1000);
-      console.log('Relay checked for updates, waited for the file picker, and replaced the AppImage automatically.');
+      applying = true;
+      console.log('File picker dismissed. Watching for the AppImage replacement.');
+      const restartedProfile = path.join(root, 'config', 'Relay', 'Preferences');
+      for (let attempt = 0; attempt < 30; attempt++) {
+        const changed = await fs.stat(file).then(info => info.mtimeMs > 1000, () => false);
+        const reopened = await fs.access(restartedProfile).then(() => true, () => false);
+        if (changed && reopened) {
+          console.log('Relay replaced the AppImage and reopened it automatically.');
+          return;
+        }
+        await delay(1000);
+      }
+      const changed = await fs.stat(file).then(info => info.mtimeMs > 1000, () => false);
+      throw new Error(changed ? 'AppImage was replaced but the relaunched profile did not open.' : 'AppImage replacement did not complete.');
     }
   } finally {
-    if (!closed) await app.close();
+    if (!applying) await Promise.race([app.close(), delay(5000, null, { ref: false })]);
   }
 }
 
@@ -90,4 +100,4 @@ async function testAppImage(root, file) {
   } finally {
     await fs.rm(root, { recursive: true, force: true, maxRetries: 2 });
   }
-})().catch(error => { console.error(error); process.exitCode = 1; });
+})().then(() => process.exit(0), error => { console.error(error); process.exit(1); });
