@@ -25,13 +25,21 @@ button[data-icon],.icon{display:inline-block;flex:none;width:18px;height:18px;ba
 .window-actions button:last-child:hover{background:#c82743;color:white}
 .window-actions .icon{width:15px;height:15px}
 .frame{display:grid;grid-template-columns:210px minmax(0,1fr);height:calc(100% - 50px)}
-.rail{display:flex;flex-direction:column;justify-content:space-between;padding:21px 13px 12px;background:var(--glass);border-right:1px solid var(--line);min-width:0}
-.rail nav{display:grid;gap:6px}
+.rail{display:flex;flex-direction:column;justify-content:space-between;padding:21px 13px 12px;background:var(--glass);border-right:1px solid var(--line);min-width:0;min-height:0}
+.rail-top{display:flex;flex-direction:column;min-height:0}
+.rail-pages{display:grid;gap:6px;flex:none}
 .rail nav button{position:relative;border-radius:9px;display:flex;align-items:center;gap:12px;padding:11px 12px;text-align:left;color:var(--muted);font-weight:620}
 .rail nav button:hover{background:var(--panel);color:var(--text)}
 .rail nav button[aria-current=page]{color:var(--accent);background:var(--panel);box-shadow:var(--shadow)}
 .rail nav button[aria-current=page]::before{content:"";position:absolute;left:0;width:3px;height:17px;background:var(--accent);border-radius:0 2px 2px 0}
-.rail-bottom{display:grid;gap:5px}
+.rail-instances{margin-top:13px;padding-top:8px;border-top:1px solid var(--line);min-height:0;overflow:auto;scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+.rail .rail-instance{width:100%;gap:8px;padding:7px 8px;margin-bottom:3px;font-weight:500}
+.rail-instance:focus-visible{outline-offset:-2px}
+.rail-instance-icon{width:30px;height:30px;border-radius:7px;flex:none}
+.rail-instance-label{min-width:0}
+.rail-instance-label strong{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-weight:650;font-size:12px;color:var(--text)}
+.rail-instance-label small{display:block;margin-top:1px;font-size:10px;line-height:1.35;color:var(--muted);overflow-wrap:anywhere}
+.rail-bottom{display:grid;gap:5px;flex:none;padding-top:8px}
 .account{display:flex;align-items:center;gap:8px;text-align:left;padding:8px;border-radius:10px;min-width:0}
 .account:hover{background:var(--panel)}
 .account strong,.account small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -82,6 +90,9 @@ h3{font-size:15px;font-weight:740;letter-spacing:-.02em}
 .tile .trim .button{min-height:31px;padding:4px 8px;font-size:12px}
 .tile h3,.project h3{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tile-icon,.project-icon{width:42px;height:42px;border-radius:10px;display:grid;place-items:center;background:color-mix(in srgb,var(--item,var(--accent)),var(--panel) 84%);color:var(--accent);flex:none;object-fit:cover}
+.instance-art{object-fit:cover;display:block;background:var(--accent-soft)}
+.instance-art.default-art{object-fit:contain;padding:3px}
+.editor-instance-icon{width:44px;height:44px;border-radius:9px;flex:none}
 .project-icon{width:46px;height:46px}
 .tile-icon .icon,.project-icon .icon{width:23px;height:23px}
 .tile-note{font-size:11px;color:var(--muted);margin-top:3px}

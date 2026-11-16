@@ -1,4 +1,4 @@
-const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell } = require('electron');
+const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, shell } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -29,7 +29,7 @@ let closeAfterSettings = false;
 let updateStatus = { state: 'idle' };
 let updateTimer;
 let downloadedVersion;
-let choosingJava = false;
+let openFileDialogs = 0;
 
 function emit(event) {
   if (window && !window.isDestroyed()) window.webContents.send('relay:event', event);
@@ -63,6 +63,47 @@ function accent(value) {
 }
 function confinedString(value, fallback = '', max = 1024) {
   return typeof value === 'string' ? value.trim().slice(0, max) : fallback;
+}
+
+function customIcon(value = '') {
+  if (value !== '' && (typeof value !== 'string' || value.length > 60000 ||
+      !/^data:image\/png;base64,iVBORw0KGgo[A-Za-z0-9+/]*={0,2}$/.test(value))) {
+    throw new Error('Choose a PNG or JPEG instance icon.');
+  }
+  return value;
+}
+
+async function chooseFile(title, filters) {
+  if (updateStatus.state === 'installing') throw new Error('Relay is restarting to apply an update.');
+  openFileDialogs++;
+  try {
+    const result = await dialog.showOpenDialog(window, {
+      title, properties: ['openFile'], ...(filters ? { filters } : {})
+    });
+    return result.canceled ? '' : result.filePaths[0];
+  } finally {
+    openFileDialogs--;
+  }
+}
+
+async function chooseIcon() {
+  const file = await chooseFile('Choose an instance icon', [{ name: 'PNG and JPEG images', extensions: ['png', 'jpg', 'jpeg'] }]);
+  if (!file) return '';
+  const handle = await fs.open(file, 'r');
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.size > 8 * 1024 ** 2) throw new Error('Choose an image smaller than 8 MB.');
+    const image = nativeImage.createFromBuffer(await handle.readFile());
+    const { width, height } = image.getSize();
+    if (image.isEmpty() || width > 4096 || height > 4096) {
+      throw new Error('Choose a PNG or JPEG image up to 4096 pixels wide and high.');
+    }
+    const edge = Math.min(width, height);
+    const square = image.crop({ x: Math.floor((width - edge) / 2), y: Math.floor((height - edge) / 2), width: edge, height: edge });
+    return customIcon(square.resize({ width: 96, height: 96, quality: 'best' }).toDataURL());
+  } finally {
+    await handle.close();
+  }
 }
 
 async function saveSettings(payload) {
@@ -118,7 +159,7 @@ async function createInstance(payload) {
   if (!name) throw new Error('Enter an instance name.');
   const item = {
     id: randomUUID(), minecraft, loader, loaderVersion, name,
-    accent: accent(payload.accent), icon: '', cover: '', ram: 0, java: '',
+    accent: accent(payload.accent), icon: '', customIcon: customIcon(payload.customIcon), cover: '', ram: 0, java: '',
     created: Date.now(), lastPlayed: 0, content: []
   };
   await fs.mkdir(store.dir(item.id), { recursive: true });
@@ -134,6 +175,7 @@ async function editInstance(id, payload) {
   return store.change(data => {
     const target = data.instances.find(item => item.id === id);
     Object.assign(target, { name, accent: accent(payload.accent), ram: payload.ram ? number(payload.ram, 1024, 32768, 0) : 0, java: confinedString(payload.java) });
+    if (Object.hasOwn(payload, 'customIcon')) target.customIcon = customIcon(payload.customIcon);
   });
 }
 
@@ -169,7 +211,7 @@ function update(event) {
 }
 
 function busyForUpdate() {
-  return doing || pendingSettings > 0 || choosingJava || game.running().length > 0 || auth.pending();
+  return doing || pendingSettings > 0 || openFileDialogs > 0 || game.running().length > 0 || auth.pending();
 }
 
 function scheduleUpdate() {
@@ -235,6 +277,7 @@ function register() {
     loaders,
     'instance:create': payload => exclusive(() => createInstance(payload)),
     'instance:edit': (id, payload) => exclusive(() => editInstance(id, payload)),
+    'instance:choose-icon': chooseIcon,
     'instance:folder': async id => {
       store.instance(id);
       const dir = store.dir(id);
@@ -283,18 +326,7 @@ function register() {
       await Promise.all(sharedFolders.map(folder => fs.mkdir(path.join(sharing.root, folder), { recursive: true })));
       if (await shell.openPath(sharing.root)) throw new Error('Relay could not open the shared files folder.');
     },
-    'settings:java': async () => {
-      choosingJava = true;
-      try {
-        const result = await dialog.showOpenDialog(window, {
-          title: 'Choose a Java executable', properties: ['openFile'],
-          ...(windows ? { filters: [{ name: 'Java executable', extensions: ['exe'] }] } : {})
-        });
-        return result.canceled ? '' : result.filePaths[0];
-      } finally {
-        choosingJava = false;
-      }
-    },
+    'settings:java': () => chooseFile('Choose a Java executable', windows ? [{ name: 'Java executable', extensions: ['exe'] }] : undefined),
     'updates:check': () => checkUpdates(true),
     'window:action': action => {
       if (action === 'minimize') window.minimize();

@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('relay', {
   loaders: (loader, minecraft) => invoke('loaders', loader, minecraft),
   create: data => invoke('instance:create', data),
   edit: (id, data) => invoke('instance:edit', id, data),
+  chooseInstanceIcon: () => invoke('instance:choose-icon'),
   folder: id => invoke('instance:folder', id),
   delete: id => invoke('instance:delete', id),
   installGame: (id, repair) => invoke('game:install', id, repair),

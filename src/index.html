@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https://cdn.modrinth.com; font-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://cdn.modrinth.com; font-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
   <title>Relay</title>
   <link rel="stylesheet" href="style.css">
   <script defer src="ui.js"></script>
@@ -19,11 +19,14 @@
   </header>
   <div class="frame">
     <aside class="rail">
-      <nav aria-label="Main navigation">
-        <button data-page="library"><span data-icon="layout-grid"></span>Library</button>
-        <button data-page="discover"><span data-icon="compass"></span>Discover</button>
-        <button data-page="settings"><span data-icon="settings"></span>Settings</button>
-      </nav>
+      <div class="rail-top">
+        <nav class="rail-pages" aria-label="Main navigation">
+          <button data-page="library"><span data-icon="layout-grid"></span>Library</button>
+          <button data-page="discover"><span data-icon="compass"></span>Discover</button>
+          <button data-page="settings"><span data-icon="settings"></span>Settings</button>
+        </nav>
+        <nav class="rail-instances" id="rail-instances" aria-label="Instances" hidden></nav>
+      </div>
       <div class="rail-bottom">
         <button class="account" id="account"></button>
         <button class="rail-meta" data-action="check-update" id="rail-update"></button>

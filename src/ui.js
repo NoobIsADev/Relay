@@ -33,6 +33,7 @@ let installingContent = false;
 const pendingPreferences = new Map();
 let preferenceError = '';
 let preferencesSaved = false;
+let instanceRailMarkup = '';
 let soundContext;
 
 function esc(text) {
@@ -54,6 +55,13 @@ function image(url, fallback, cls) {
   const imageUrl = source(url);
   return imageUrl ? '<img class="' + cls + '" src="' + esc(imageUrl) + '" alt="" loading="lazy">' :
     '<span class="' + cls + '">' + svg(fallback) + '</span>';
+}
+function instanceArt(item, cls) {
+  const custom = item.customIcon;
+  const local = typeof custom === 'string' && /^data:image\/png;base64,iVBORw0KGgo[A-Za-z0-9+/]*={0,2}$/.test(custom);
+  const url = local ? custom : source(item.icon);
+  return '<img class="instance-art ' + cls + (url ? '' : ' default-art') + '" src="' +
+    esc(url || '../assets/logo.png') + '" alt="" decoding="async">';
 }
 function button(label, icon, action, options = {}) {
   return '<button type="button" class="button ' + (options.style || '') + '" data-action="' + action +
@@ -160,6 +168,25 @@ function showDialog(title, body, footer = '', sub = '') {
     (footer ? '<div class="dialog-actions row">' + footer + '</div>' : '') + '</div>';
   if (!modal.open) modal.showModal();
 }
+function refreshInstanceRail() {
+  const rail = $('#rail-instances');
+  const markup = data.instances.map(item => {
+    const detail = item.minecraft + ' / ' + labels[item.loader];
+    const selected = page === 'instance' && activeItem === item.id ? ' aria-current="page"' : '';
+    return '<button type="button" class="rail-instance" data-action="view-instance" data-id="' + esc(item.id) +
+      '" title="' + esc(item.name + ' · ' + detail) + '"' + selected + '>' +
+      instanceArt(item, 'rail-instance-icon') + '<span class="rail-instance-label"><strong>' + esc(item.name) +
+      '</strong><small>' + esc(detail) + '</small></span></button>';
+  }).join('');
+  rail.hidden = data.instances.length === 0;
+  if (markup === instanceRailMarkup) return;
+  instanceRailMarkup = markup;
+  const scrollTop = rail.scrollTop;
+  const focused = rail.contains(document.activeElement) ? document.activeElement.dataset.id : '';
+  rail.innerHTML = markup;
+  rail.scrollTop = scrollTop;
+  if (focused) Array.from(rail.children).find(button => button.dataset.id === focused)?.focus({ preventScroll: true });
+}
 function refreshChrome() {
   const account = data.account;
   $('#account').innerHTML = '<span class="avatar">' + (account ? esc(account.name.slice(0, 2).toUpperCase()) : svg('user-round')) +
@@ -172,6 +199,7 @@ function refreshChrome() {
     if (nav.dataset.page === (page === 'instance' ? 'library' : page)) nav.setAttribute('aria-current', 'page');
     else nav.removeAttribute('aria-current');
   }
+  refreshInstanceRail();
 }
 async function refresh(draw = true) {
   data = await api.state();
@@ -201,7 +229,7 @@ function actionFor(item, mode = 'primary') {
 function tile(item) {
   return '<div class="tile" style="--item:' + (validAccent(item.accent) || 'var(--accent)') + '">' +
     '<button type="button" class="tile-top" data-action="view-instance" data-id="' + esc(item.id) + '">' +
-    image(item.icon, 'box', 'tile-icon') + '<span class="truncate"><h3>' + esc(item.name) + '</h3><span class="tile-note">' +
+    instanceArt(item, 'tile-icon') + '<span class="truncate"><h3>' + esc(item.name) + '</h3><span class="tile-note">' +
     esc(loaderLine(item)) + '</span></span></button><div class="row trim">' +
     iconButton('Open instance folder', 'folder-open', 'folder', item.id) + actionFor(item) + '</div></div>';
 }
@@ -475,6 +503,18 @@ function render() {
   if (page === 'settings') settingsPage();
 }
 
+function iconField(item = {}) {
+  return '<div class="field">Instance icon<div class="row"><span data-icon-preview>' +
+    instanceArt(item, 'editor-instance-icon') + '</span>' +
+    button('Choose image', 'folder-open', 'choose-instance-icon') +
+    button('Reset icon', 'refresh-cw', 'reset-instance-icon', { disabled: !item.customIcon }) + '</div></div>';
+}
+function previewInstanceIcon(form, customIcon) {
+  form.dataset.customIcon = customIcon;
+  $('[data-icon-preview]', form).innerHTML = instanceArt({ customIcon, icon: form.dataset.projectIcon }, 'editor-instance-icon');
+  $('[data-action=reset-instance-icon]', form).disabled = !customIcon;
+}
+
 function createDialog() {
   showDialog('New instance',
     '<form id="instance-form">' + field('Instance name', '<input name="name" placeholder="My Minecraft instance" required maxlength="64">') +
@@ -483,6 +523,7 @@ function createDialog() {
     field('Mod loader', '<select name="loader">' +
       Object.entries(labels).filter(([key]) => key !== 'neoforge').map(([key, name]) => option(key, name, 'vanilla')).join('') + '</select>') +
     '<div id="loader-field" hidden>' + field('Loader version', '<select name="loaderVersion"></select>') + '</div>' +
+    iconField() +
     '<div class="field">Instance accent' + colorField('', defaultAccents[document.documentElement.dataset.theme]) + '</div></form>',
     button('Cancel', '', 'close-dialog') + '<button class="button primary" type="submit" form="instance-form" disabled>' + svg('plus') +
     'Create instance</button>');
@@ -540,7 +581,8 @@ function createDialog() {
     try {
       const item = await api.create({
         name: f.name.value, minecraft: f.minecraft.value, loader: f.loader.value,
-        loaderVersion: f.loaderVersion.value, accent: f.accentEnabled.checked ? f.color.value : ''
+        loaderVersion: f.loaderVersion.value, accent: f.accentEnabled.checked ? f.color.value : '',
+        customIcon: form.dataset.customIcon || ''
       });
       modal.close();
       await refresh(false);
@@ -557,19 +599,25 @@ function createDialog() {
 function editDialog(item) {
   showDialog('Edit instance', '<form id="edit-instance">' +
     field('Instance name', '<input name="name" value="' + esc(item.name) + '" required maxlength="64">') +
+    iconField(item) +
     '<div class="field">Instance accent' + colorField(item.accent, defaultAccents[document.documentElement.dataset.theme]) + '</div>' +
     field('Memory override (MB)', '<input name="ram" type="number" min="1024" max="32768" step="256" placeholder="Use global setting" value="' + (item.ram || '') + '">') +
     '<div class="field">Java override' + javaField(item.java) + '</div></form>',
     button('Delete instance', 'trash-2', 'delete-instance', { id: item.id, style: 'danger' }) +
     '<button class="button primary" type="submit" form="edit-instance">' + svg('check') + 'Save</button>', loaderLine(item));
   const form = $('#edit-instance');
+  form.dataset.customIcon = item.customIcon || '';
+  form.dataset.projectIcon = item.icon || '';
   form.onsubmit = async event => {
     event.preventDefault();
     const f = form.elements;
     const submit = $('button[type=submit]', modal);
     submit.disabled = true;
     try {
-      await api.edit(item.id, { name: f.name.value, accent: f.accentEnabled.checked ? f.color.value : '', ram: Number(f.ram.value), java: f.java.value });
+      await api.edit(item.id, {
+        name: f.name.value, accent: f.accentEnabled.checked ? f.color.value : '', ram: Number(f.ram.value),
+        java: f.java.value, customIcon: form.dataset.customIcon
+      });
       modal.close();
       await refresh();
       toast('Instance updated');
@@ -781,6 +829,18 @@ async function action(name, id, control) {
       await refresh();
       toast('Content removed');
       break;
+    case 'choose-instance-icon': {
+      const form = control.closest('form');
+      control.disabled = true;
+      try {
+        const picked = await api.chooseInstanceIcon();
+        if (picked && form.isConnected && modal.open) previewInstanceIcon(form, picked);
+      } finally {
+        control.disabled = false;
+      }
+      break;
+    }
+    case 'reset-instance-icon': previewInstanceIcon(control.closest('form'), ''); break;
     case 'pick-java': {
       const picked = await api.java();
       if (picked) {

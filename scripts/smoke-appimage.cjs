@@ -60,6 +60,15 @@ async function testAppImage(root, file) {
     const state = await page.evaluate(() => window.relay.state());
     assert.equal(state.settings.theme, 'midnight');
     console.log('AppImage rendered Relay through its Linux entry point.');
+    if (!testingUpdate) {
+      await page.evaluate(() => window.relay.create({ name: 'Linux sidebar test', minecraft: '1.21.1', loader: 'vanilla' }));
+      await page.reload();
+      const row = page.locator('#rail-instances .rail-instance').first();
+      await row.getByText('1.21.1 / Vanilla', { exact: true }).waitFor();
+      assert.match(await row.locator('img').getAttribute('src'), /assets\/logo\.png$/);
+      await row.click();
+      await page.getByRole('heading', { name: 'Linux sidebar test', level: 1 }).waitFor();
+    }
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await page.locator('select[name=theme]').selectOption('graphite');
     await page.getByText('Saved automatically', { exact: true }).waitFor();
