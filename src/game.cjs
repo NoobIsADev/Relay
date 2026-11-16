@@ -1,5 +1,6 @@
 const path = require('node:path');
 const fs = require('node:fs/promises');
+const { constants } = require('node:fs');
 const { spawn } = require('node:child_process');
 const { MinecraftFolder, Version, launch } = require('@xmcl/core');
 const installer = require('@xmcl/installer');
@@ -17,6 +18,10 @@ const loaderMeta = {
 };
 const liteMeta = 'https://meta.prismlauncher.org/v1/com.mumfrey.liteloader';
 const cache = 600000;
+const runtimePlatforms = {
+  win32: { x64: 'windows-x64', ia32: 'windows-x86', arm64: 'windows-arm64' },
+  linux: { x64: 'linux', ia32: 'linux-i386', arm64: 'linux-arm64' }
+};
 
 async function titles() {
   return getJson(installer.DEFAULT_VERSION_MANIFEST_URL, { cache });
@@ -106,13 +111,13 @@ function createGame(root, store, send) {
       if (major !== requirement.majorVersion) throw new Error('Minecraft ' + item.minecraft + ' requires Java ' + requirement.majorVersion + '. Choose a matching executable or clear the custom path.');
     } else {
       progress('Checking Java ' + requirement.majorVersion);
-      const platform = 'windows-' + (process.arch === 'arm64' ? 'arm64' : process.arch === 'ia32' ? 'x86' : 'x64');
+      const platform = runtimePlatforms[process.platform]?.[process.arch];
       const index = await getJson(installer.DEFAULT_RUNTIME_ALL_URL, { cache });
       const target = (index[platform]?.[requirement.component] || [])[0];
       if (!target) throw new Error('A managed Java runtime is unavailable. Choose a Java ' + requirement.majorVersion + ' executable in Settings.');
       const destination = path.join(root, 'java', requirement.component, cleanVersion(target.version.name));
-      java = path.join(destination, 'bin', 'java.exe');
-      if (force || !await fs.access(java).then(() => true, () => false)) {
+      java = path.join(destination, 'bin', process.platform === 'win32' ? 'java.exe' : 'java');
+      if (force || !await fs.access(java, constants.X_OK).then(() => true, () => false)) {
         await workflow(installer.createJavaRuntimeInstallWorkflow({ target, destination }));
       }
     }

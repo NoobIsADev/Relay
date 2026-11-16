@@ -1,8 +1,8 @@
 {
   "name": "relay-minecraft-launcher",
   "productName": "Relay",
-  "version": "0.1.1",
-  "description": "A customizable Minecraft: Java Edition launcher for Windows",
+  "version": "0.1.2",
+  "description": "A customizable Minecraft: Java Edition launcher for Windows and Linux",
   "author": "NoobIsADev",
   "private": true,
   "main": "src/main.cjs",
@@ -14,6 +14,7 @@
     "start": "electron .",
     "check": "node scripts/check.cjs",
     "dist": "electron-builder --win nsis --x64 --publish never",
+    "dist:linux": "electron-builder --linux AppImage --x64 --publish never",
     "release": "node scripts/release.cjs"
   },
   "dependencies": {
@@ -54,6 +55,13 @@
       "target": "nsis",
       "icon": "assets/relay.ico",
       "signExecutable": false
+    },
+    "linux": {
+      "target": "AppImage",
+      "artifactName": "Relay-${version}-x86_64.${ext}",
+      "icon": "assets/logo.png",
+      "category": "Game",
+      "maintainer": "NoobIsADev"
     },
     "nsis": {
       "oneClick": false,

@@ -8,11 +8,21 @@ function createAuth(root, store, send) {
   const encryptedFile = path.join(root, 'microsoft.bin');
   let running;
   let currentCode;
+  let sessionAccount;
   let memory = {};
   let saves = Promise.resolve();
 
+  function canPersist() {
+    return safeStorage.isEncryptionAvailable() &&
+      (process.platform !== 'linux' || safeStorage.getSelectedStorageBackend() !== 'basic_text');
+  }
+
+  function account() {
+    return sessionAccount || (canPersist() ? store.get().account : null);
+  }
+
   function persist() {
-    if (!safeStorage.isEncryptionAvailable()) return Promise.resolve();
+    if (!canPersist()) return Promise.resolve();
     const data = safeStorage.encryptString(JSON.stringify(memory));
     saves = saves.catch(() => {}).then(() => writeAtomic(encryptedFile, data));
     return saves;
@@ -39,8 +49,8 @@ function createAuth(root, store, send) {
     if (running) return running;
     running = (async () => {
       currentCode = undefined;
-      if (!allowPrompt && !store.get().account) throw new Error('Sign in with Microsoft before launching Minecraft.');
-      if (!Object.keys(memory).length && safeStorage.isEncryptionAvailable()) {
+      if (!allowPrompt && !account()) throw new Error('Sign in with Microsoft before launching Minecraft.');
+      if (!Object.keys(memory).length && canPersist()) {
         try {
           memory = JSON.parse(safeStorage.decryptString(await fs.readFile(encryptedFile)));
         } catch (error) {
@@ -82,10 +92,12 @@ function createAuth(root, store, send) {
         }
         throw new Error('Minecraft Java Edition did not return a player profile. Check that this Microsoft account owns the game and has set a Java username.');
       }
-      const account = { name: session.profile.name, id: session.profile.id };
+      sessionAccount = { name: session.profile.name, id: session.profile.id };
       const prior = store.get().account;
-      if (!prior || prior.id !== account.id || prior.name !== account.name) await store.change(state => { state.account = account; });
-      return { account, token: session.token };
+      if (canPersist() && (!prior || prior.id !== sessionAccount.id || prior.name !== sessionAccount.name)) {
+        await store.change(state => { state.account = sessionAccount; });
+      }
+      return { account: sessionAccount, token: session.token };
     })();
     try {
       return await running;
@@ -100,10 +112,11 @@ function createAuth(root, store, send) {
     await saves.catch(() => {});
     await fs.rm(encryptedFile, { force: true });
     memory = {};
+    sessionAccount = undefined;
     await store.change(state => { state.account = null; });
   }
 
-  return { login, openCode, signOut, pending: () => Boolean(running) };
+  return { account, login, openCode, signOut, pending: () => Boolean(running) };
 }
 
 module.exports = { createAuth };

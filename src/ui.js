@@ -5,7 +5,7 @@ const signin = document.querySelector('#signin');
 const $ = (selector, within = document) => within.querySelector(selector);
 const labels = { vanilla: 'Vanilla', fabric: 'Fabric', legacyfabric: 'Legacy Fabric', forge: 'Forge', liteloader: 'LiteLoader', quilt: 'Quilt', neoforge: 'NeoForge' };
 const categoryNames = { mod: 'Mods', modpack: 'Modpacks', resourcepack: 'Resource packs', shader: 'Shaders' };
-const themeNames = { sky: 'Light blue', midnight: 'Midnight', mint: 'Mint', lavender: 'Lavender', system: 'Use Windows theme' };
+const themeNames = { sky: 'Light blue', midnight: 'Midnight', mint: 'Mint', lavender: 'Lavender', system: 'Use system theme' };
 const defaultAccents = { sky: '#1668bd', midnight: '#85c4ff', mint: '#0e7558', lavender: '#6648a8' };
 const count = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
 const systemTheme = matchMedia('(prefers-color-scheme: dark)');

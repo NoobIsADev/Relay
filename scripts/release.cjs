@@ -7,7 +7,7 @@ const root = path.join(__dirname, '..');
 const repo = 'NoobIsADev/Relay';
 const manifest = path.join(root, 'package.json');
 const release = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
-const tracked = ['.gitignore', 'README.md', 'PUSH-AND-RELEASE.bat', 'package.json', 'package-lock.json', 'assets', 'scripts', 'src'];
+const tracked = ['.github', '.gitignore', 'README.md', 'PUSH-AND-RELEASE.bat', 'package.json', 'package-lock.json', 'assets', 'scripts', 'src'];
 
 function command(executable, args, { capture = false, allowFailure = false } = {}) {
   const result = spawnSync(executable, args, {
@@ -50,6 +50,40 @@ function compare(first, second) {
   return (a[0] - b[0]) || (a[1] - b[1]) || (a[2] - b[2]);
 }
 
+function verifyUpdateFiles(directory, version, artifact, channel) {
+  const update = fs.readFileSync(path.join(directory, channel), 'utf8');
+  const hash = createHash('sha512').update(fs.readFileSync(path.join(directory, artifact))).digest('base64');
+  if (!update.includes('version: ' + version) || !update.includes('url: ' + artifact) ||
+      !update.includes('sha512: ' + hash)) {
+    throw new Error(artifact + ' and ' + channel + ' do not match.');
+  }
+}
+
+function buildLinux(tag, head, version, dist) {
+  const trigger = 'repos/' + repo + '/actions/workflows/build-linux.yml/dispatches';
+  const run = JSON.parse(ghValue('api', '--method', 'POST', trigger, '-H', 'X-GitHub-Api-Version: 2026-03-10',
+    '-f', 'ref=' + tag, '-F', 'return_run_details=true'));
+  const id = String(run.workflow_run_id);
+  if (!/^\d+$/.test(id)) throw new Error('GitHub did not return the Linux build ID.');
+  console.log('Building Linux AppImage on GitHub Actions: ' + run.html_url);
+  gh('run', 'watch', id, '-R', repo, '--interval', '10', '--exit-status');
+  if (ghValue('run', 'view', id, '-R', repo, '--json', 'headSha', '--jq', '.headSha') !== head) {
+    throw new Error('The AppImage was built from a different commit.');
+  }
+
+  const image = 'Relay-' + version + '-x86_64.AppImage';
+  const channel = 'latest-linux.yml';
+  const staging = fs.mkdtempSync(path.join(dist, '.linux-'));
+  try {
+    gh('run', 'download', id, '-R', repo, '--name', 'relay-linux-x64', '--dir', staging);
+    verifyUpdateFiles(staging, version, image, channel);
+    for (const asset of [image, channel]) fs.renameSync(path.join(staging, asset), path.join(dist, asset));
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true });
+  }
+  return [image, channel];
+}
+
 function publish() {
   if (!process.env.npm_execpath) throw new Error('Run PUSH-AND-RELEASE.bat or npm run release.');
   const args = process.argv.slice(2);
@@ -77,7 +111,7 @@ function publish() {
     release.test(item.tagName.slice(1)) && compare(item.tagName.slice(1), version) >= 0);
   if (newer) throw new Error('Choose a version higher than ' + newer.tagName + ' for automatic updates.');
   if (dryRun) {
-    console.log('Ready to build and publish ' + tag + ' to ' + repo + '.');
+    console.log('Ready to build and publish Windows and Linux ' + tag + ' to ' + repo + '.');
     return;
   }
 
@@ -90,14 +124,11 @@ function publish() {
   npm('run', 'check');
   npm('run', 'dist');
 
+  const dist = path.join(root, 'dist');
   const setupName = 'Relay-Setup-' + version + '.exe';
-  const artifacts = [setupName, setupName + '.blockmap', 'latest.yml'].map(name => path.join('dist', name));
-  const update = fs.readFileSync(path.join(root, artifacts[2]), 'utf8');
-  const hash = createHash('sha512').update(fs.readFileSync(path.join(root, artifacts[0]))).digest('base64');
-  if (!update.includes('version: ' + version) || !update.includes('url: ' + setupName) ||
-      !update.includes('sha512: ' + hash) || !fs.statSync(path.join(root, artifacts[1])).size) {
-    throw new Error('Installer, blockmap, and update manifest do not match.');
-  }
+  const windows = [setupName, setupName + '.blockmap', 'latest.yml'];
+  verifyUpdateFiles(dist, version, setupName, 'latest.yml');
+  if (!fs.statSync(path.join(dist, windows[1])).size) throw new Error('The Windows installer blockmap is empty.');
 
   git('add', '--', ...tracked);
   if (gitValue('diff', '--cached', '--name-only')) git('commit', '-m', 'Release Relay ' + version);
@@ -113,8 +144,10 @@ function publish() {
     if (remoteTag && remoteTag.split(/\s+/)[0] !== head) throw new Error('The remote tag points to a different commit.');
     if (!remoteTag) git('-c', 'credential.helper=', '-c', 'credential.helper=!gh auth git-credential',
       'push', 'origin', head + ':refs/tags/' + tag);
-    gh('release', 'create', tag, '-R', repo, '--verify-tag', '--draft', '--title', 'Relay ' + version, '--generate-notes');
   }
+  const linux = buildLinux(tag, head, version, dist);
+  const artifacts = [...windows, ...linux].map(name => path.join(dist, name));
+  if (!existing) gh('release', 'create', tag, '-R', repo, '--verify-tag', '--draft', '--title', 'Relay ' + version, '--generate-notes');
   gh('release', 'upload', tag, ...artifacts, '-R', repo, '--clobber');
   gh('release', 'edit', tag, '-R', repo, '--draft=false', '--latest');
   console.log('Published https://github.com/' + repo + '/releases/tag/' + tag);

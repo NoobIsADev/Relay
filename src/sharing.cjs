@@ -5,6 +5,7 @@ const { createHash, randomUUID } = require('node:crypto');
 const { inside, readJson, writeAtomic } = require('./storage.cjs');
 
 const sharedFolders = ['resourcepacks', 'shaderpacks'];
+const windows = process.platform === 'win32';
 
 function folderOf(relative) {
   return relative.split('/')[0];
@@ -166,7 +167,8 @@ function createSharing(root, store) {
     const linked = previous?.isSymbolicLink();
     if (linked) {
       const currentTarget = await fs.realpath(local).catch(() => '');
-      if (currentTarget.toLowerCase() !== (await fs.realpath(shared)).toLowerCase()) {
+      const sharedTarget = await fs.realpath(shared);
+      if ((windows ? currentTarget.toLowerCase() : currentTarget) !== (windows ? sharedTarget.toLowerCase() : sharedTarget)) {
         throw new Error(instance.name + ' uses its own link for ' + folder + '. Move that link before changing Relay sharing.');
       }
     } else if (previous && !previous.isDirectory()) {
@@ -182,7 +184,7 @@ function createSharing(root, store) {
 
     const renamed = enable && previous ? await importContents(local, shared, tmp, swap) : new Map();
     const staged = tmp();
-    if (enable) await fs.symlink(shared, staged, 'junction');
+    if (enable) await fs.symlink(shared, staged, windows ? 'junction' : 'dir');
     else await copy(shared, staged);
     await swap(local, staged, previous);
     return renamed;

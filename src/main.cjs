@@ -13,6 +13,8 @@ const { contents, createSharing, sharedFolders } = require('./sharing.cjs');
 const ui = path.join(__dirname, 'index.html');
 const uiUrl = pathToFileURL(ui).href;
 const themeNames = ['sky', 'midnight', 'mint', 'lavender', 'system'];
+const windows = process.platform === 'win32';
+const linux = process.platform === 'linux';
 let window;
 let store;
 let auth;
@@ -30,7 +32,7 @@ function emit(event) {
 function state() {
   const current = store.get();
   return {
-    settings: current.settings, account: current.account,
+    settings: current.settings, account: auth.account(),
     instances: current.instances.map(item => ({ ...item, content: contents(current, item) })),
     appVersion: app.getVersion(), running: game.running(), update: updateStatus
   };
@@ -136,8 +138,11 @@ function update(event) {
 }
 
 function checkUpdates(manual = false) {
-  if (!app.isPackaged || process.platform !== 'win32') {
-    if (manual) update({ state: 'development', message: 'Install Relay using the Windows setup file to use automatic updates.' });
+  if (!app.isPackaged || (!windows && !(linux && process.env.APPIMAGE))) {
+    if (manual) {
+      const distribution = linux ? 'Run Relay directly from its AppImage' : 'Install Relay using the Windows setup file';
+      update({ state: 'development', message: distribution + ' to use automatic updates.' });
+    }
     return;
   }
   if (checking || ['ready', 'downloading'].includes(updateStatus.state)) return;
@@ -174,7 +179,7 @@ function register() {
       const dir = store.dir(id);
       await fs.mkdir(dir, { recursive: true });
       const error = await shell.openPath(dir);
-      if (error) throw new Error('Windows could not open the instance folder.');
+      if (error) throw new Error('Relay could not open the instance folder.');
     },
     'instance:delete': id => exclusive(async () => {
       store.instance(id);
@@ -215,11 +220,12 @@ function register() {
     'settings:save': payload => exclusive(() => saveSettings(payload)),
     'settings:shared-folder': async () => {
       await Promise.all(sharedFolders.map(folder => fs.mkdir(path.join(sharing.root, folder), { recursive: true })));
-      if (await shell.openPath(sharing.root)) throw new Error('Windows could not open the shared files folder.');
+      if (await shell.openPath(sharing.root)) throw new Error('Relay could not open the shared files folder.');
     },
     'settings:java': async () => {
       const result = await dialog.showOpenDialog(window, {
-        title: 'Choose a Java executable', properties: ['openFile'], filters: [{ name: 'Java executable', extensions: ['exe'] }]
+        title: 'Choose a Java executable', properties: ['openFile'],
+        ...(windows ? { filters: [{ name: 'Java executable', extensions: ['exe'] }] } : {})
       });
       return result.canceled ? '' : result.filePaths[0];
     },
@@ -253,7 +259,7 @@ function createWindow() {
   window = new BrowserWindow({
     title: 'Relay', width: 1260, height: 850, minWidth: 850, minHeight: 670,
     frame: false, show: false, backgroundColor: '#eaf2fd',
-    icon: path.join(__dirname, '../assets/relay.ico'),
+    icon: path.join(__dirname, windows ? '../assets/relay.ico' : '../assets/logo.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true
     }
@@ -270,7 +276,7 @@ function createWindow() {
   window.loadFile(ui);
 }
 
-app.setAppUserModelId('dev.noobisadev.relay');
+if (windows) app.setAppUserModelId('dev.noobisadev.relay');
 app.setPath('userData', app.commandLine.getSwitchValue('user-data-dir') || path.join(app.getPath('appData'), 'Relay'));
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
