@@ -27,6 +27,9 @@ let settingsWrites = Promise.resolve();
 let pendingSettings = 0;
 let closeAfterSettings = false;
 let updateStatus = { state: 'idle' };
+let updateTimer;
+let downloadedVersion;
+let choosingJava = false;
 
 function emit(event) {
   if (window && !window.isDestroyed()) window.webContents.send('relay:event', event);
@@ -42,6 +45,7 @@ function state() {
 }
 
 async function exclusive(fn) {
+  if (updateStatus.state === 'installing') throw new Error('Relay is restarting to apply an update.');
   if (doing) throw new Error('Another installation or library change is in progress.');
   doing = true;
   try {
@@ -92,6 +96,7 @@ async function saveSettings(payload) {
 }
 
 function enqueueSettings(payload) {
+  if (updateStatus.state === 'installing') throw new Error('Relay is restarting to apply an update.');
   pendingSettings++;
   const save = settingsWrites.then(() => saveSettings(payload));
   settingsWrites = save.catch(() => {});
@@ -163,6 +168,27 @@ function update(event) {
   emit({ type: 'update', ...event });
 }
 
+function busyForUpdate() {
+  return doing || pendingSettings > 0 || choosingJava || game.running().length > 0 || auth.pending();
+}
+
+function scheduleUpdate() {
+  if (!downloadedVersion || updateTimer) return;
+  const waiting = busyForUpdate();
+  const nextState = waiting ? 'ready' : 'scheduled';
+  if (updateStatus.state !== nextState) {
+    update({ state: nextState, message: 'Relay ' + downloadedVersion + (waiting ?
+      ' will install when Minecraft and current tasks finish.' : ' will install automatically and restart Relay.') });
+  }
+  updateTimer = setTimeout(() => {
+    updateTimer = undefined;
+    if (waiting || busyForUpdate()) return scheduleUpdate();
+    update({ state: 'installing', message: 'Installing Relay ' + downloadedVersion + '…' });
+    autoUpdater.quitAndInstall(true, true);
+  }, waiting ? 2000 : 5000);
+  updateTimer.unref();
+}
+
 function checkUpdates(manual = false) {
   if (!app.isPackaged || (!windows && !(linux && process.env.APPIMAGE))) {
     if (manual) {
@@ -171,7 +197,7 @@ function checkUpdates(manual = false) {
     }
     return;
   }
-  if (checking || ['ready', 'downloading'].includes(updateStatus.state)) return;
+  if (checking || downloadedVersion || updateStatus.state === 'downloading') return;
   checking = Promise.resolve(autoUpdater.checkForUpdates())
     .catch(() => update({ state: 'error', message: 'Could not check GitHub for an update.' }))
     .finally(() => { checking = null; });
@@ -184,8 +210,17 @@ function configureUpdater() {
   autoUpdater.on('update-available', info => update({ state: 'downloading', message: 'Downloading Relay ' + info.version }));
   autoUpdater.on('update-not-available', () => update({ state: 'current', message: 'Relay is up to date.' }));
   autoUpdater.on('download-progress', progress => update({ state: 'downloading', message: 'Downloading update · ' + Math.round(progress.percent) + '%' }));
-  autoUpdater.on('update-downloaded', info => update({ state: 'ready', message: 'Relay ' + info.version + ' is ready to install.' }));
-  autoUpdater.on('error', () => update({ state: 'error', message: 'Could not download the latest Relay update.' }));
+  autoUpdater.on('update-downloaded', info => {
+    downloadedVersion = info.version;
+    scheduleUpdate();
+  });
+  autoUpdater.on('error', () => {
+    const installing = updateStatus.state === 'installing';
+    clearTimeout(updateTimer);
+    updateTimer = undefined;
+    downloadedVersion = undefined;
+    update({ state: 'error', message: installing ? 'Could not install the Relay update.' : 'Could not download the latest Relay update.' });
+  });
   setTimeout(checkUpdates, 6000).unref();
   setInterval(checkUpdates, 4 * 60 * 60 * 1000).unref();
 }
@@ -249,19 +284,18 @@ function register() {
       if (await shell.openPath(sharing.root)) throw new Error('Relay could not open the shared files folder.');
     },
     'settings:java': async () => {
-      const result = await dialog.showOpenDialog(window, {
-        title: 'Choose a Java executable', properties: ['openFile'],
-        ...(windows ? { filters: [{ name: 'Java executable', extensions: ['exe'] }] } : {})
-      });
-      return result.canceled ? '' : result.filePaths[0];
+      choosingJava = true;
+      try {
+        const result = await dialog.showOpenDialog(window, {
+          title: 'Choose a Java executable', properties: ['openFile'],
+          ...(windows ? { filters: [{ name: 'Java executable', extensions: ['exe'] }] } : {})
+        });
+        return result.canceled ? '' : result.filePaths[0];
+      } finally {
+        choosingJava = false;
+      }
     },
     'updates:check': () => checkUpdates(true),
-    'updates:install': () => {
-      if (updateStatus.state !== 'ready') throw new Error('No update is ready to install.');
-      if (doing || game.running().length) throw new Error('Close Minecraft and wait for active installs before restarting.');
-      if (pendingSettings) throw new Error('Wait for settings to finish saving before restarting.');
-      autoUpdater.quitAndInstall();
-    },
     'window:action': action => {
       if (action === 'minimize') window.minimize();
       if (action === 'maximize') window.isMaximized() ? window.unmaximize() : window.maximize();
@@ -301,7 +335,10 @@ function createWindow() {
       closeAfterSettings = true;
       return;
     }
-    if (!doing) return;
+    if (!doing) {
+      if (busyForUpdate()) autoUpdater.autoInstallOnAppQuit = false;
+      return;
+    }
     event.preventDefault();
     emit({ type: 'busy-close' });
   });

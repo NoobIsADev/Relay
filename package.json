@@ -1,7 +1,7 @@
 {
   "name": "relay-minecraft-launcher",
   "productName": "Relay",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "A customizable Minecraft: Java Edition launcher for Windows and Linux",
   "author": "NoobIsADev",
   "private": true,
@@ -64,8 +64,8 @@
       "maintainer": "NoobIsADev"
     },
     "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
+      "oneClick": true,
+      "perMachine": false,
       "installerIcon": "assets/relay.ico",
       "uninstallerIcon": "assets/relay.ico"
     }

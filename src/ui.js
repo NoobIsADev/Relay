@@ -164,10 +164,10 @@ function refreshChrome() {
   const account = data.account;
   $('#account').innerHTML = '<span class="avatar">' + (account ? esc(account.name.slice(0, 2).toUpperCase()) : svg('user-round')) +
     '</span><span class="truncate"><strong>' + esc(account?.name || 'Sign in') + '</strong><small>Microsoft account</small></span>';
-  const update = data.update?.state === 'ready';
+  const updating = ['ready', 'scheduled', 'installing'].includes(data.update?.state);
   const updateButton = $('#rail-update');
-  updateButton.innerHTML = svg(update ? 'arrow-down-to-line' : 'refresh-cw') + (update ? 'Install update' : 'Relay ' + esc(data.appVersion));
-  updateButton.dataset.action = update ? 'apply-update' : 'check-update';
+  updateButton.innerHTML = svg(updating ? 'arrow-down-to-line' : 'refresh-cw') +
+    (updating ? 'Update pending' : 'Relay ' + esc(data.appVersion));
   for (const nav of document.querySelectorAll('[data-page]')) {
     if (nav.dataset.page === (page === 'instance' ? 'library' : page)) nav.setAttribute('aria-current', 'page');
     else nav.removeAttribute('aria-current');
@@ -319,8 +319,9 @@ function javaField(value) {
 }
 function updateControls() {
   const state = data.update?.state;
-  return state === 'ready' ? button('Restart and install', 'arrow-down-to-line', 'apply-update', { style: 'primary' }) :
-    button('Check for updates', 'refresh-cw', 'check-update', { disabled: state === 'checking' || state === 'downloading' }) +
+  return button('Check for updates', 'refresh-cw', 'check-update', {
+    disabled: ['checking', 'downloading', 'ready', 'scheduled', 'installing'].includes(state)
+  }) +
     button('GitHub', 'external-link', 'github');
 }
 function displayedSettings() {
@@ -795,7 +796,6 @@ async function action(name, id, control) {
       await api.checkUpdates();
       if (page !== 'settings') navigate('settings');
       break;
-    case 'apply-update': await api.applyUpdate(); break;
     case 'github': await api.open('https://github.com/NoobIsADev/Relay/releases'); break;
   }
 }
@@ -834,7 +834,7 @@ api.onEvent(event => {
     refreshChrome();
     if ($('#update-message')) $('#update-message').textContent = event.message;
     if ($('#update-controls')) $('#update-controls').innerHTML = updateControls();
-    if (event.state === 'ready') toast(event.message);
+    if (event.state === 'scheduled') toast(event.message);
   }
   if (event.type === 'busy-close') toast('Wait for the current installation to finish before closing Relay.', 'error');
 });

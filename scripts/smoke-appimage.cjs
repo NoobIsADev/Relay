@@ -22,12 +22,35 @@ async function testJava(root) {
 
 async function testAppImage(root, file) {
   const { _electron: electron } = require('playwright');
+  const testingUpdate = process.env.VERIFY_UPDATE === 'true';
+  if (testingUpdate) {
+    const target = path.join(root, 'Relay.AppImage');
+    await fs.copyFile(file, target);
+    await fs.chmod(target, 0o755);
+    await fs.utimes(target, 1, 1);
+    file = target;
+  }
   const app = await electron.launch({
     executablePath: path.resolve(file),
     args: ['--user-data-dir=' + root],
-    env: { ...process.env, APPIMAGE_EXTRACT_AND_RUN: '1', XDG_CACHE_HOME: path.join(root, 'cache') }
+    env: { ...process.env, APPIMAGE_EXTRACT_AND_RUN: '1', XDG_CACHE_HOME: path.join(root, 'cache'),
+      XDG_CONFIG_HOME: path.join(root, 'config') }
   });
+  let closed = false;
   try {
+    if (testingUpdate) {
+      await app.evaluate(({ app, dialog }) => {
+        const path = process.getBuiltinModule('path');
+        const { createRequire } = process.getBuiltinModule('module');
+        const load = createRequire(path.join(app.getAppPath(), 'package.json'));
+        const { autoUpdater } = load('electron-updater');
+        autoUpdater.currentVersion = load('semver').parse('0.0.0');
+        autoUpdater.autoInstallOnAppQuit = false;
+        dialog.showOpenDialog = () => new Promise(resolve => {
+          globalThis.finishPicker = () => resolve({ canceled: true, filePaths: [] });
+        });
+      });
+    }
     const page = await app.firstWindow();
     await page.getByRole('heading', { name: 'Your library' }).waitFor();
     const actualImage = await app.evaluate(() => process.env.APPIMAGE);
@@ -40,23 +63,19 @@ async function testAppImage(root, file) {
     await page.getByText('Saved automatically', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.relay.state().then(relay => relay.settings.theme)), 'graphite');
 
-    if (process.env.VERIFY_UPDATE === 'true') {
-      await app.evaluate(({ app }) => {
-        const path = process.getBuiltinModule('path');
-        const { createRequire } = process.getBuiltinModule('module');
-        const load = createRequire(path.join(app.getAppPath(), 'package.json'));
-        const { autoUpdater } = load('electron-updater');
-        autoUpdater.currentVersion = load('semver').parse('0.0.0');
-        autoUpdater.autoInstallOnAppQuit = false;
-      });
-      const check = page.getByRole('button', { name: 'Check for updates', exact: true });
-      if (await check.isEnabled()) await check.click();
-      await page.getByText('Relay ' + state.appVersion + ' is ready to install.', { exact: true }).first().waitFor({ timeout: 120000 });
-      assert.equal(await page.evaluate(() => window.relay.state().then(relay => relay.update.state)), 'ready');
-      console.log('The Linux updater downloaded the AppImage from GitHub Releases.');
+    if (testingUpdate) {
+      await page.getByRole('button', { name: 'Browse', exact: true }).click();
+      await page.getByText(/will install when Minecraft and current tasks finish/).waitFor({ timeout: 120000 });
+      assert.equal((await fs.stat(file)).mtimeMs, 1000);
+      const restarted = app.waitForEvent('close', { timeout: 45000 });
+      await app.evaluate(() => globalThis.finishPicker());
+      await restarted;
+      closed = true;
+      assert.ok((await fs.stat(file)).mtimeMs > 1000);
+      console.log('Relay checked for updates, waited for the file picker, and replaced the AppImage automatically.');
     }
   } finally {
-    await app.close();
+    if (!closed) await app.close();
   }
 }
 

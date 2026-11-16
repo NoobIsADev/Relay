@@ -1,10 +1,10 @@
-name: Linux AppImage
-run-name: Linux AppImage (${{ github.ref_name }})
+name: Linux AppImage and update verification
+run-name: Relay packaging (${{ github.ref_name }})
 on:
   workflow_dispatch:
     inputs:
       verify_update:
-        description: Verify an already-published AppImage can download an update
+        description: Verify unattended updates using the published Windows and Linux packages
         type: boolean
         default: false
 permissions:
@@ -53,3 +53,26 @@ jobs:
             dist/latest-linux.yml
           if-no-files-found: error
           compression-level: 0
+  windows-update:
+    if: ${{ inputs.verify_update }}
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - name: Test one-click setup and silent updates
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh release download $env:GITHUB_REF_NAME --pattern 'Relay-Setup-*.exe' --dir dist
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm install --prefix "$env:RUNNER_TEMP/relay-smoke" --no-save --ignore-scripts playwright@1.65.1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $env:NODE_PATH = "$env:RUNNER_TEMP/relay-smoke/node_modules"
+          $installer = Get-ChildItem dist -Filter 'Relay-Setup-*.exe' | Select-Object -First 1
+          node scripts/smoke-nsis.cjs $installer.FullName

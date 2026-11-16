@@ -24,7 +24,6 @@ contextBridge.exposeInMainWorld('relay', {
   openSharedFolder: () => invoke('settings:shared-folder'),
   java: () => invoke('settings:java'),
   checkUpdates: () => invoke('updates:check'),
-  applyUpdate: () => invoke('updates:install'),
   window: action => invoke('window:action', action),
   open: url => invoke('open:link', url),
   onEvent(listener) {
