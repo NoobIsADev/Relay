@@ -24,7 +24,7 @@ async function testAppImage(root, file) {
   const { _electron: electron } = require('playwright');
   const testingUpdate = process.env.VERIFY_UPDATE === 'true';
   if (testingUpdate) {
-    const target = path.join(root, 'Relay.AppImage');
+    const target = path.join(root, path.basename(file));
     await fs.copyFile(file, target);
     await fs.chmod(target, 0o755);
     await fs.utimes(target, 1, 1);
@@ -38,6 +38,9 @@ async function testAppImage(root, file) {
   });
   let closed = false;
   try {
+    const page = await app.firstWindow({ timeout: 30000 });
+    await page.getByRole('heading', { name: 'Your library' }).waitFor();
+    console.log('AppImage window opened.');
     if (testingUpdate) {
       await app.evaluate(({ app, dialog }) => {
         const path = process.getBuiltinModule('path');
@@ -51,8 +54,6 @@ async function testAppImage(root, file) {
         });
       });
     }
-    const page = await app.firstWindow();
-    await page.getByRole('heading', { name: 'Your library' }).waitFor();
     const actualImage = await app.evaluate(() => process.env.APPIMAGE);
     assert.equal(await fs.realpath(actualImage), await fs.realpath(file));
     const state = await page.evaluate(() => window.relay.state());
@@ -65,7 +66,9 @@ async function testAppImage(root, file) {
 
     if (testingUpdate) {
       await page.getByRole('button', { name: 'Browse', exact: true }).click();
+      console.log('Holding updates while the Java file picker is open.');
       await page.getByText(/will install when Minecraft and current tasks finish/).waitFor({ timeout: 120000 });
+      console.log('Update downloaded and waiting for the file picker.');
       assert.equal((await fs.stat(file)).mtimeMs, 1000);
       const restarted = app.waitForEvent('close', { timeout: 45000 });
       await app.evaluate(() => globalThis.finishPicker());

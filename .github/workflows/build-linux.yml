@@ -7,6 +7,9 @@ on:
         description: Verify unattended updates using the published Windows and Linux packages
         type: boolean
         default: false
+      release_tag:
+        description: Published release to test when dispatching from main
+        type: string
 permissions:
   contents: read
 jobs:
@@ -31,10 +34,12 @@ jobs:
         if: ${{ inputs.verify_update }}
         env:
           GH_TOKEN: ${{ github.token }}
+          RELAY_TEST_RELEASE: ${{ inputs.release_tag || github.ref_name }}
         run: |
-          gh release download "$GITHUB_REF_NAME" --pattern '*.AppImage' --dir dist
+          gh release download "$RELAY_TEST_RELEASE" --pattern '*.AppImage' --dir dist
           chmod +x dist/*.AppImage
       - name: Test the packaged launcher
+        timeout-minutes: 4
         env:
           VERIFY_UPDATE: ${{ inputs.verify_update }}
         run: |
@@ -65,11 +70,13 @@ jobs:
         with:
           node-version: 24
       - name: Test one-click setup and silent updates
+        timeout-minutes: 4
         env:
           GH_TOKEN: ${{ github.token }}
+          RELAY_TEST_RELEASE: ${{ inputs.release_tag || github.ref_name }}
         shell: pwsh
         run: |
-          gh release download $env:GITHUB_REF_NAME --pattern 'Relay-Setup-*.exe' --dir dist
+          gh release download $env:RELAY_TEST_RELEASE --pattern 'Relay-Setup-*.exe' --dir dist
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           npm install --prefix "$env:RUNNER_TEMP/relay-smoke" --no-save --ignore-scripts playwright@1.65.1
           if ($LASTEXITCODE) { exit $LASTEXITCODE }

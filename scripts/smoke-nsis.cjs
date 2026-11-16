@@ -21,27 +21,31 @@ function powershell(executable, command) {
 }
 
 (async () => {
-  const root = await fs.mkdtemp(path.join(tmpdir(), 'relay-nsis-smoke-'));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(tmpdir(), 'relay-nsis-smoke-')));
   const directory = path.join(root, 'installed');
-  const executable = path.join(directory, 'Relay.exe');
-  const archive = path.join(directory, 'resources', 'app.asar');
   const marker = path.join(root, 'install-arguments.json');
   const installer = path.resolve(process.argv[2]);
-  const findWindows = 'Get-Process Relay -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $env:RELAY_SMOKE_EXE }';
-  const isOpen = () => powershell(executable, findWindows + ' | Where-Object MainWindowTitle | Select-Object -First 1 -ExpandProperty Id');
-  const stopTestApp = () => powershell(executable, findWindows + ' | Stop-Process -Force -ErrorAction SilentlyContinue');
-
   // Deliberately omit /S for first setup to catch an interactive installer wizard.
   const firstInstall = spawnSync(installer, ['/D=' + directory], { timeout: 90000, windowsHide: true });
   assert.equal(firstInstall.status, 0, firstInstall.error?.message || 'Initial setup failed.');
-  await waitUntil(isOpen);
+  const executable = await fs.realpath(path.join(directory, 'Relay.exe')).catch(() =>
+    fs.realpath(path.join(process.env.LOCALAPPDATA, 'Programs', 'Relay', 'Relay.exe')));
+  const archive = path.join(path.dirname(executable), 'resources', 'app.asar');
+  await fs.access(archive);
+  const findWindows = 'Get-CimInstance Win32_Process -Filter "Name=\'Relay.exe\'" | Where-Object { $_.ExecutablePath -eq $env:RELAY_SMOKE_EXE }';
+  const isOpen = () => powershell(executable, findWindows + ' | Where-Object { $_.CommandLine -notmatch "--type=" } | Select-Object -First 1 -ExpandProperty ProcessId');
+  const stopTestApp = () => powershell(executable, findWindows + ' | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }');
+
+  await delay(1500);
   stopTestApp();
   await fs.utimes(archive, 2000, 2000);
-  console.log('One-click setup installed and opened Relay without input.');
+  console.log('One-click setup exited and installed Relay without input.');
 
   const app = await electron.launch({ executablePath: executable, args: ['--user-data-dir=' + path.join(root, 'profile')] });
   let closed = false;
   try {
+    const page = await app.firstWindow({ timeout: 30000 });
+    await page.getByRole('heading', { name: 'Your library' }).waitFor();
     await app.evaluate(({ app }, marker) => {
       const path = process.getBuiltinModule('path');
       const { createRequire } = process.getBuiltinModule('module');
@@ -54,8 +58,7 @@ function powershell(executable, command) {
         apply(...args);
       };
     }, marker);
-    const page = await app.firstWindow();
-    await page.getByRole('heading', { name: 'Your library' }).waitFor();
+    console.log('Waiting for the automatic update over the existing install.');
     await app.waitForEvent('close', { timeout: 120000 });
     closed = true;
     assert.deepEqual(JSON.parse(await fs.readFile(marker, 'utf8')), [true, true]);
