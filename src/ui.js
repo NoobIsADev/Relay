@@ -5,8 +5,15 @@ const signin = document.querySelector('#signin');
 const $ = (selector, within = document) => within.querySelector(selector);
 const labels = { vanilla: 'Vanilla', fabric: 'Fabric', legacyfabric: 'Legacy Fabric', forge: 'Forge', liteloader: 'LiteLoader', quilt: 'Quilt', neoforge: 'NeoForge' };
 const categoryNames = { mod: 'Mods', modpack: 'Modpacks', resourcepack: 'Resource packs', shader: 'Shaders' };
-const themeNames = { sky: 'Light blue', midnight: 'Midnight', mint: 'Mint', lavender: 'Lavender', system: 'Use system theme' };
-const defaultAccents = { sky: '#1668bd', midnight: '#85c4ff', mint: '#0e7558', lavender: '#6648a8' };
+const themeNames = {
+  midnight: 'Midnight', graphite: 'Graphite', ocean: 'Deep Ocean', amethyst: 'Amethyst',
+  sky: 'Light blue', mint: 'Mint', lavender: 'Lavender', system: 'Use system theme'
+};
+const defaultAccents = {
+  midnight: '#85c4ff', graphite: '#c8d8ee', ocean: '#6ce3e8', amethyst: '#d1b2ff',
+  sky: '#1668bd', mint: '#0e7558', lavender: '#6648a8'
+};
+const sharedPreferences = { sharedResourcePacks: 'resourcepacks', sharedShaderPacks: 'shaderpacks' };
 const count = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
 const systemTheme = matchMedia('(prefers-color-scheme: dark)');
 let data;
@@ -23,6 +30,9 @@ let authCode;
 let authError = '';
 let projectSequence = 0;
 let installingContent = false;
+const pendingPreferences = new Map();
+let preferenceError = '';
+let preferencesSaved = false;
 let soundContext;
 
 function esc(text) {
@@ -165,7 +175,7 @@ function refreshChrome() {
 }
 async function refresh(draw = true) {
   data = await api.state();
-  theme(data.settings.theme, data.settings.accent);
+  applySavedTheme();
   refreshChrome();
   if (draw) render();
 }
@@ -313,11 +323,99 @@ function updateControls() {
     button('Check for updates', 'refresh-cw', 'check-update', { disabled: state === 'checking' || state === 'downloading' }) +
     button('GitHub', 'external-link', 'github');
 }
+function displayedSettings() {
+  let values = data.settings;
+  for (const patch of pendingPreferences.values()) {
+    values = { ...values, ...patch, shared: { ...values.shared, ...patch.shared } };
+  }
+  return values;
+}
+function applySavedTheme() {
+  const values = displayedSettings();
+  theme(values.theme, values.accent);
+}
+function settingsStatus() {
+  const status = $('#settings-status');
+  if (!status) return;
+  status.textContent = preferenceError || (pendingPreferences.size ? 'Saving…' :
+    preferencesSaved ? 'Saved automatically' : 'Changes save automatically');
+  status.classList.toggle('error', Boolean(preferenceError));
+}
+function settingsAccount() {
+  return '<p class="hint">' + esc(data.account ? 'Signed in as ' + data.account.name : 'Sign in with a Minecraft: Java Edition Microsoft account.') +
+    '</p><div>' + button(data.account ? 'Sign out' : 'Sign in', data.account ? 'log-out' : 'user-round',
+      data.account ? 'signout' : 'signin') + '</div>';
+}
+function preferencePatch(form, control) {
+  const name = control.name;
+  const fields = form.elements;
+  if (name === 'color' || name === 'accentEnabled') {
+    return { accent: fields.accentEnabled.checked ? fields.color.value : '' };
+  }
+  if (Object.hasOwn(sharedPreferences, name)) return { shared: { [sharedPreferences[name]]: control.checked } };
+  if (control.type === 'checkbox') return { [name]: control.checked };
+  if (control.type === 'range' || control.type === 'number') return { [name]: control.valueAsNumber };
+  return { [name]: control.value };
+}
+function restorePreference(name, key) {
+  const form = $('#settings-form');
+  if (!form) return;
+  const fields = form.elements;
+  const saved = data.settings;
+  const control = fields[name];
+  if (key === 'accent') {
+    fields.accentEnabled.checked = Boolean(saved.accent);
+    fields.color.value = saved.accent || defaultAccents[document.documentElement.dataset.theme];
+  } else if (control.type === 'checkbox') {
+    control.checked = Object.hasOwn(sharedPreferences, name) ? saved.shared[sharedPreferences[name]] : saved[name];
+  } else if (control.type === 'range' || control.tagName === 'SELECT') {
+    control.value = saved[name];
+  } else {
+    control.setAttribute('aria-invalid', 'true');
+  }
+}
+async function savePreference(form, control) {
+  const name = control.name;
+  preferenceError = '';
+  control.removeAttribute('aria-invalid');
+  if (name === 'ram' && !control.validity.valid) {
+    preferenceError = 'Enter memory between 1024 and 32768 MB in steps of 256.';
+    control.setAttribute('aria-invalid', 'true');
+    settingsStatus();
+    return;
+  }
+
+  const patch = preferencePatch(form, control);
+  const key = Object.hasOwn(patch, 'accent') ? 'accent' : name;
+  pendingPreferences.set(key, patch);
+  settingsStatus();
+  let failed = false;
+  try {
+    const saved = await api.settings(patch);
+    data.settings = saved.settings;
+    data.account = saved.account;
+    if (patch.shared) data.instances = saved.instances;
+    if (name === 'microsoftClientId' && $('#settings-account')) $('#settings-account').innerHTML = settingsAccount();
+    refreshChrome();
+    preferencesSaved = true;
+  } catch (error) {
+    failed = true;
+    preferenceError = errorText(error);
+    if (page !== 'settings') toast(preferenceError, 'error');
+  } finally {
+    const current = pendingPreferences.get(key) === patch;
+    if (current) pendingPreferences.delete(key);
+    if (key === 'accent' || key === 'theme') applySavedTheme();
+    if (failed && current) restorePreference(name, key);
+    settingsStatus();
+  }
+}
 function settingsPage() {
-  const setting = data.settings;
+  const setting = displayedSettings();
   const actual = document.documentElement.dataset.theme;
-  main.innerHTML = '<div class="shell">' + heading('Settings', 'Personalize Relay and manage your Minecraft setup.') +
-    '<form id="settings-form"><div class="settings-grid">' +
+  main.innerHTML = '<div class="shell">' + heading('Settings', 'Personalize Relay and manage your Minecraft setup.',
+    '<p id="settings-status" class="settings-status" role="status"></p>') +
+    '<form id="settings-form" class="settings-form"><div class="settings-grid">' +
     '<section class="panel fields"><h2>Appearance</h2>' + field('Theme', '<select name="theme">' +
     Object.entries(themeNames).map(([value, name]) => option(value, name, setting.theme)).join('') + '</select>') +
     '<div class="field">Accent color' + colorField(setting.accent, defaultAccents[actual]) + '</div></section>' +
@@ -330,8 +428,7 @@ function settingsPage() {
     field('Default memory (MB)', '<input name="ram" type="number" min="1024" max="32768" step="256" value="' + setting.ram + '" required>') +
     '<div class="field">Custom Java executable' + javaField(setting.java) + '<span>Leave blank to download the right Java runtime automatically.</span></div></section>' +
     '<section class="panel fields"><h2>Microsoft account</h2>' +
-    '<p class="hint">' + esc(data.account ? 'Signed in as ' + data.account.name : 'Sign in with a Minecraft: Java Edition Microsoft account.') + '</p>' +
-    '<div>' + button(data.account ? 'Sign out' : 'Sign in', data.account ? 'log-out' : 'user-round', data.account ? 'signout' : 'signin') + '</div>' +
+    '<div class="fields" id="settings-account">' + settingsAccount() + '</div>' +
     '<details><summary>Advanced sign-in</summary>' + field('Microsoft application ID',
       '<input name="microsoftClientId" value="' + esc(setting.microsoftClientId) +
       '" placeholder="Use Relay default" maxlength="40"><span>Optional approved public application ID.</span>') +
@@ -341,33 +438,32 @@ function settingsPage() {
     '<label class="check"><input type="checkbox" name="sharedShaderPacks"' +
     (setting.shared.shaderpacks ? ' checked' : '') + '> Share shader packs across all instances</label>' +
     '<p class="hint">Turning sharing on combines the folders. Turning it off copies the shared files back into each instance.</p>' +
-    '<div>' + button('Open shared folder', 'folder-open', 'shared-folder') + '</div></section></div>' +
-    '<div class="row" style="margin:14px 0">' +
-    '<button class="button primary" type="submit">' + svg('check') + 'Save settings</button></div></form>' +
+    '<div>' + button('Open shared folder', 'folder-open', 'shared-folder') + '</div></section></div></form>' +
     '<section class="panel"><div class="split"><div><h2>Launcher updates</h2><p id="update-message" class="sub">' +
     esc(data.update?.message || 'Relay ' + data.appVersion) + '</p></div><div id="update-controls" class="row">' +
     updateControls() + '</div></div></section></div>';
   const form = $('#settings-form');
-  form.oninput = () => theme(form.elements.theme.value, form.elements.accentEnabled.checked ? form.elements.color.value : '');
-  form.onsubmit = async event => {
-    event.preventDefault();
-    const f = form.elements;
-    const submit = $('button[type=submit]', form);
-    submit.disabled = true;
-    try {
-      await api.settings({
-        theme: f.theme.value, accent: f.accentEnabled.checked ? f.color.value : '', sounds: f.sounds.checked,
-        toasts: f.toasts.checked, volume: Number(f.volume.value), ram: Number(f.ram.value),
-        java: f.java.value, microsoftClientId: f.microsoftClientId.value,
-        shared: { resourcepacks: f.sharedResourcePacks.checked, shaderpacks: f.sharedShaderPacks.checked }
-      });
-      await refresh();
-      toast('Settings saved');
-    } catch (error) {
-      toast(errorText(error), 'error');
-      submit.disabled = false;
+  const fields = form.elements;
+  form.oninput = event => {
+    const name = event.target.name;
+    if (!['color', 'accentEnabled', 'theme'].includes(name)) return;
+    if (name === 'color') fields.accentEnabled.checked = true;
+    theme(fields.theme.value, fields.accentEnabled.checked ? fields.color.value : '');
+    if (name === 'theme' && !fields.accentEnabled.checked) {
+      fields.color.value = defaultAccents[document.documentElement.dataset.theme];
     }
   };
+  form.onchange = event => {
+    if (event.target.name) savePreference(form, event.target);
+  };
+  form.onkeydown = event => {
+    if (event.key === 'Enter' && event.target.matches('input[type=number],input:not([type])')) {
+      event.preventDefault();
+      event.target.blur();
+    }
+  };
+  form.onsubmit = event => event.preventDefault();
+  settingsStatus();
 }
 function render() {
   const id = ++renderId;
@@ -686,7 +782,11 @@ async function action(name, id, control) {
       break;
     case 'pick-java': {
       const picked = await api.java();
-      if (picked) control.parentElement.querySelector('input').value = picked;
+      if (picked) {
+        const field = control.parentElement.querySelector('input');
+        field.value = picked;
+        field.dispatchEvent(new Event('change', { bubbles: true }));
+      }
       break;
     }
     case 'test-sound': playTone('success', Number($('#settings-form').elements.volume.value)); break;
@@ -744,7 +844,7 @@ document.addEventListener('click', event => {
   if (!control || control.disabled || !data) return;
   if (control.dataset.window) api.window(control.dataset.window);
   if (control.dataset.page) {
-    theme(data.settings.theme, data.settings.accent);
+    applySavedTheme();
     navigate(control.dataset.page);
   }
   if (control.id === 'account') showSignIn();
@@ -761,7 +861,7 @@ for (const node of document.querySelectorAll('[data-icon]')) node.outerHTML = sv
 for (const node of document.querySelectorAll('[data-window]')) {
   node.innerHTML = svg({ minimize: 'minus', maximize: 'square', close: 'x' }[node.dataset.window]);
 }
-systemTheme.addEventListener('change', () => { if (data) theme(data.settings.theme, data.settings.accent); });
+systemTheme.addEventListener('change', () => { if (data) applySavedTheme(); });
 refresh().catch(error => {
   main.innerHTML = '<div class="shell">' + empty('circle-alert', 'Relay could not open your library', errorText(error)) + '</div>';
 });

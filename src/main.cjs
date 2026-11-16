@@ -12,7 +12,7 @@ const { contents, createSharing, sharedFolders } = require('./sharing.cjs');
 
 const ui = path.join(__dirname, 'index.html');
 const uiUrl = pathToFileURL(ui).href;
-const themeNames = ['sky', 'midnight', 'mint', 'lavender', 'system'];
+const themeNames = ['midnight', 'graphite', 'ocean', 'amethyst', 'sky', 'mint', 'lavender', 'system'];
 const windows = process.platform === 'win32';
 const linux = process.platform === 'linux';
 let window;
@@ -23,6 +23,9 @@ let catalog;
 let sharing;
 let doing;
 let checking;
+let settingsWrites = Promise.resolve();
+let pendingSettings = 0;
+let closeAfterSettings = false;
 let updateStatus = { state: 'idle' };
 
 function emit(event) {
@@ -65,17 +68,40 @@ async function saveSettings(payload) {
   const shared = Object.fromEntries(sharedFolders.map(folder => [
     folder, typeof payload.shared?.[folder] === 'boolean' ? payload.shared[folder] : previous.shared[folder]
   ]));
-  if (game.running().length && sharedFolders.some(folder => shared[folder] !== previous.shared[folder])) {
-    throw new Error('Close Minecraft before changing shared folders.');
-  }
-  if (id !== previous.microsoftClientId) await auth.signOut();
-  await sharing.saveSettings({
+  const changedSharing = sharedFolders.some(folder => shared[folder] !== previous.shared[folder]);
+  const changedAccount = id !== previous.microsoftClientId;
+  const next = {
     theme: themeNames.includes(payload.theme) ? payload.theme : previous.theme,
-    accent: accent(payload.accent), sounds: Boolean(payload.sounds), toasts: Boolean(payload.toasts),
-    volume: number(payload.volume, 0, 100, 45), ram: number(payload.ram, 1024, 32768, 4096),
-    java: confinedString(payload.java), microsoftClientId: id, shared
-  });
+    accent: typeof payload.accent === 'string' ? accent(payload.accent) : previous.accent,
+    sounds: typeof payload.sounds === 'boolean' ? payload.sounds : previous.sounds,
+    toasts: typeof payload.toasts === 'boolean' ? payload.toasts : previous.toasts,
+    volume: number(payload.volume, 0, 100, previous.volume),
+    ram: number(payload.ram, 1024, 32768, previous.ram),
+    java: confinedString(payload.java, previous.java), microsoftClientId: id, shared
+  };
+  if (changedSharing || changedAccount) {
+    await exclusive(async () => {
+      if (changedSharing && game.running().length) throw new Error('Close Minecraft before changing shared folders.');
+      if (changedAccount) await auth.signOut();
+      await sharing.saveSettings(next);
+    });
+  } else {
+    await sharing.saveSettings(next);
+  }
   return state();
+}
+
+function enqueueSettings(payload) {
+  pendingSettings++;
+  const save = settingsWrites.then(() => saveSettings(payload));
+  settingsWrites = save.catch(() => {});
+  return save.finally(() => {
+    pendingSettings--;
+    if (!pendingSettings && closeAfterSettings && window && !window.isDestroyed()) {
+      closeAfterSettings = false;
+      setImmediate(() => { if (!window.isDestroyed()) window.close(); });
+    }
+  });
 }
 
 async function createInstance(payload) {
@@ -217,7 +243,7 @@ function register() {
       if (typeof code !== 'string' || !/^[A-Z\d-]{4,20}$/i.test(code)) throw new Error('No active device code.');
       clipboard.writeText(code);
     },
-    'settings:save': payload => exclusive(() => saveSettings(payload)),
+    'settings:save': enqueueSettings,
     'settings:shared-folder': async () => {
       await Promise.all(sharedFolders.map(folder => fs.mkdir(path.join(sharing.root, folder), { recursive: true })));
       if (await shell.openPath(sharing.root)) throw new Error('Relay could not open the shared files folder.');
@@ -233,6 +259,7 @@ function register() {
     'updates:install': () => {
       if (updateStatus.state !== 'ready') throw new Error('No update is ready to install.');
       if (doing || game.running().length) throw new Error('Close Minecraft and wait for active installs before restarting.');
+      if (pendingSettings) throw new Error('Wait for settings to finish saving before restarting.');
       autoUpdater.quitAndInstall();
     },
     'window:action': action => {
@@ -258,7 +285,7 @@ function register() {
 function createWindow() {
   window = new BrowserWindow({
     title: 'Relay', width: 1260, height: 850, minWidth: 850, minHeight: 670,
-    frame: false, show: false, backgroundColor: '#eaf2fd',
+    frame: false, show: false, backgroundColor: '#111b2c',
     icon: path.join(__dirname, windows ? '../assets/relay.ico' : '../assets/logo.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true
@@ -269,6 +296,11 @@ function createWindow() {
   window.webContents.session.setPermissionRequestHandler((_contents, _permission, reply) => reply(false));
   window.once('ready-to-show', () => window.show());
   window.on('close', event => {
+    if (pendingSettings) {
+      event.preventDefault();
+      closeAfterSettings = true;
+      return;
+    }
     if (!doing) return;
     event.preventDefault();
     emit({ type: 'busy-close' });

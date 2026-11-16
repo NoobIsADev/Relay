@@ -33,8 +33,12 @@ async function testAppImage(root, file) {
     const actualImage = await app.evaluate(() => process.env.APPIMAGE);
     assert.equal(await fs.realpath(actualImage), await fs.realpath(file));
     const state = await page.evaluate(() => window.relay.state());
-    assert.equal(state.settings.theme, 'sky');
+    assert.equal(state.settings.theme, 'midnight');
     console.log('AppImage rendered Relay through its Linux entry point.');
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await page.locator('select[name=theme]').selectOption('graphite');
+    await page.getByText('Saved automatically', { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => window.relay.state().then(relay => relay.settings.theme)), 'graphite');
 
     if (process.env.VERIFY_UPDATE === 'true') {
       await app.evaluate(({ app }) => {
@@ -45,7 +49,6 @@ async function testAppImage(root, file) {
         autoUpdater.currentVersion = load('semver').parse('0.0.0');
         autoUpdater.autoInstallOnAppQuit = false;
       });
-      await page.getByRole('button', { name: 'Settings', exact: true }).click();
       const check = page.getByRole('button', { name: 'Check for updates', exact: true });
       if (await check.isEnabled()) await check.click();
       await page.getByText('Relay ' + state.appVersion + ' is ready to install.', { exact: true }).first().waitFor({ timeout: 120000 });

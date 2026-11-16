@@ -3,7 +3,7 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 
 const defaults = {
-  theme: 'sky', accent: '', sounds: true, volume: 45, toasts: true, ram: 4096, java: '', microsoftClientId: '',
+  theme: 'midnight', accent: '', sounds: true, volume: 45, toasts: true, ram: 4096, java: '', microsoftClientId: '',
   shared: { resourcepacks: false, shaderpacks: false }
 };
 
