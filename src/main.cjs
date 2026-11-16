@@ -4,10 +4,11 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { randomUUID } = require('node:crypto');
 const { autoUpdater } = require('electron-updater');
-const { openStore, cleanVersion, inside } = require('./storage.cjs');
+const { openStore, cleanVersion } = require('./storage.cjs');
 const { createAuth } = require('./auth.cjs');
 const { createGame, loaderNames, loaders, titles } = require('./game.cjs');
 const { createCatalog, details, search } = require('./catalog.cjs');
+const { contents, createSharing, sharedFolders } = require('./sharing.cjs');
 
 const ui = path.join(__dirname, 'index.html');
 const uiUrl = pathToFileURL(ui).href;
@@ -17,6 +18,7 @@ let store;
 let auth;
 let game;
 let catalog;
+let sharing;
 let doing;
 let checking;
 let updateStatus = { state: 'idle' };
@@ -26,7 +28,12 @@ function emit(event) {
 }
 
 function state() {
-  return { ...store.get(), appVersion: app.getVersion(), running: game.running(), update: updateStatus };
+  const current = store.get();
+  return {
+    settings: current.settings, account: current.account,
+    instances: current.instances.map(item => ({ ...item, content: contents(current, item) })),
+    appVersion: app.getVersion(), running: game.running(), update: updateStatus
+  };
 }
 
 async function exclusive(fn) {
@@ -53,14 +60,18 @@ async function saveSettings(payload) {
   const previous = store.get().settings;
   const id = confinedString(payload.microsoftClientId, previous.microsoftClientId, 40).toLowerCase();
   if (id && !/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/.test(id)) throw new Error('Enter a valid Microsoft application ID.');
+  const shared = Object.fromEntries(sharedFolders.map(folder => [
+    folder, typeof payload.shared?.[folder] === 'boolean' ? payload.shared[folder] : previous.shared[folder]
+  ]));
+  if (game.running().length && sharedFolders.some(folder => shared[folder] !== previous.shared[folder])) {
+    throw new Error('Close Minecraft before changing shared folders.');
+  }
   if (id !== previous.microsoftClientId) await auth.signOut();
-  await store.change(data => {
-    data.settings = {
-      theme: themeNames.includes(payload.theme) ? payload.theme : previous.theme,
-      accent: accent(payload.accent), sounds: Boolean(payload.sounds), toasts: Boolean(payload.toasts),
-      volume: number(payload.volume, 0, 100, 45), ram: number(payload.ram, 1024, 32768, 4096),
-      java: confinedString(payload.java), microsoftClientId: id
-    };
+  await sharing.saveSettings({
+    theme: themeNames.includes(payload.theme) ? payload.theme : previous.theme,
+    accent: accent(payload.accent), sounds: Boolean(payload.sounds), toasts: Boolean(payload.toasts),
+    volume: number(payload.volume, 0, 100, 45), ram: number(payload.ram, 1024, 32768, 4096),
+    java: confinedString(payload.java), microsoftClientId: id, shared
   });
   return state();
 }
@@ -78,7 +89,7 @@ async function createInstance(payload) {
     created: Date.now(), lastPlayed: 0, content: []
   };
   await fs.mkdir(store.dir(item.id), { recursive: true });
-  await store.change(data => { data.instances.unshift(item); });
+  await sharing.add(item);
   return item;
 }
 
@@ -96,9 +107,9 @@ async function editInstance(id, payload) {
 async function removeContent(id, project) {
   const item = store.instance(id);
   if (game.busy(id)) throw new Error('Close Minecraft before changing installed content.');
-  const entry = item.content.find(value => value.project === project);
+  const entry = contents(store.get(), item).find(value => value.project === project);
   if (!entry) throw new Error('This project is no longer installed.');
-  const original = inside(store.dir(id), entry.relative);
+  const original = sharing.file(item, entry.relative);
   const temp = original + '.' + randomUUID() + '.removed';
   const moved = await fs.rename(original, temp).then(() => true, error => {
     if (error.code === 'ENOENT') return false;
@@ -106,8 +117,11 @@ async function removeContent(id, project) {
   });
   try {
     await store.change(data => {
-      const target = data.instances.find(value => value.id === id);
-      target.content = target.content.filter(value => value.project !== project);
+      if (entry.shared) data.sharedContent = data.sharedContent.filter(value => value.project !== project);
+      else {
+        const target = data.instances.find(value => value.id === id);
+        target.content = target.content.filter(value => value.project !== project);
+      }
     });
   } catch (error) {
     if (moved) await fs.rename(temp, original);
@@ -198,7 +212,11 @@ function register() {
       if (typeof code !== 'string' || !/^[A-Z\d-]{4,20}$/i.test(code)) throw new Error('No active device code.');
       clipboard.writeText(code);
     },
-    'settings:save': saveSettings,
+    'settings:save': payload => exclusive(() => saveSettings(payload)),
+    'settings:shared-folder': async () => {
+      await Promise.all(sharedFolders.map(folder => fs.mkdir(path.join(sharing.root, folder), { recursive: true })));
+      if (await shell.openPath(sharing.root)) throw new Error('Windows could not open the shared files folder.');
+    },
     'settings:java': async () => {
       const result = await dialog.showOpenDialog(window, {
         title: 'Choose a Java executable', properties: ['openFile'], filters: [{ name: 'Java executable', extensions: ['exe'] }]
@@ -264,9 +282,11 @@ else {
     Menu.setApplicationMenu(null);
     const root = app.getPath('userData');
     store = await openStore(root);
+    sharing = createSharing(root, store);
+    await sharing.recover();
     auth = createAuth(root, store, emit);
     game = createGame(root, store, emit);
-    catalog = createCatalog(root, store, emit);
+    catalog = createCatalog(root, store, emit, sharing);
     register();
     createWindow();
     if (app.isPackaged) configureUpdater();

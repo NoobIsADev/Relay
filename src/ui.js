@@ -22,6 +22,7 @@ let authBusy = false;
 let authCode;
 let authError = '';
 let projectSequence = 0;
+let installingContent = false;
 let soundContext;
 
 function esc(text) {
@@ -200,18 +201,16 @@ function progressHtml(message) {
 
 function library(token) {
   const list = data.instances;
-  const recent = [...list].sort((a, b) => (b.lastPlayed || b.created) - (a.lastPlayed || a.created))[0];
+  const welcome = list.length ? '' : '<section class="hero"><div class="hero-copy"><p class="eyebrow">' +
+    svg('box') + 'Minecraft Java Edition</p><h2>Make it your world.</h2>' +
+    '<p class="sub">Create an instance, pick a loader, and add content from Modrinth.</p><div class="row">' +
+    button('Create instance', 'plus', 'create', { style: 'primary' }) +
+    button('Browse Modrinth', 'compass', 'discover', { style: 'secondary' }) + '</div></div></section>';
   main.innerHTML = '<div class="shell">' + heading('Your library', 'Manage your Minecraft Java Edition instances.',
-    button('New instance', 'plus', 'create', { style: 'primary' })) +
-    '<section class="hero"' + cover(recent?.cover) + '><div class="hero-copy"><p class="eyebrow">' +
-    svg(recent ? 'clock-3' : 'box') + (recent ? 'Recent instance' : 'Minecraft Java Edition') + '</p><h2>' +
-    esc(recent?.name || 'Make it your world.') + '</h2><p class="sub">' + esc(recent ? loaderLine(recent) :
-      'Create an instance, pick a loader, and add content from Modrinth.') + '</p><div class="row">' +
-    (recent ? actionFor(recent) + button('Instance details', 'arrow-up-right', 'view-instance', { id: recent.id, style: 'secondary' }) :
-      button('Create instance', 'plus', 'create', { style: 'primary' }) + button('Browse Modrinth', 'compass', 'discover', { style: 'secondary' })) +
-    '</div></div></section><section class="section"><div class="split"><h2>Instances</h2><span class="tile-note">' +
+    button('New instance', 'plus', 'create', { style: 'primary' })) + welcome +
+    '<section class="section"><div class="split"><h2>Instances</h2><span class="tile-note">' +
     list.length + (list.length === 1 ? ' instance' : ' instances') + '</span></div><div id="game-progress">' +
-    progressHtml(recent && progress.get(recent.id)) + '</div>' +
+    progressHtml([...progress.values()][0]) + '</div>' +
     (list.length ? '<div class="grid">' + list.map(tile).join('') + '</div>' :
       empty('box', 'Your library is empty', 'Add an instance to start playing.')) +
     '</section><section class="section"><div class="split"><h2>Popular on Modrinth</h2>' +
@@ -245,7 +244,8 @@ function instanceView() {
     button('Add content', 'plus', 'discover-for', { id: item.id }) + '</div>' +
     (item.content.length ? '<div class="grid">' + item.content.map(entry => '<div class="tile"><div class="tile-top">' +
       image(entry.icon, 'package', 'tile-icon') + '<div class="truncate"><h3>' + esc(entry.name) + '</h3><p class="tile-note">' +
-      esc(entry.versionName) + '</p></div></div><div class="row trim">' + iconButton('Remove ' + entry.name, 'trash-2', 'remove-content', entry.project) +
+      esc(entry.versionName) + (entry.shared ? ' · Shared' : '') +
+      '</p></div></div><div class="row trim">' + iconButton('Remove ' + entry.name, 'trash-2', 'remove-content', entry.project) +
       '</div></div>').join('') + '</div>' :
       empty('layers', item.modpack ? 'Modpack files installed' : 'No individually installed content', item.modpack ?
         'This pack’s bundled files are available in its instance folder.' : 'Find compatible mods, shaders, and resource packs in Discover.')) +
@@ -335,7 +335,14 @@ function settingsPage() {
     '<details><summary>Advanced sign-in</summary>' + field('Microsoft application ID',
       '<input name="microsoftClientId" value="' + esc(setting.microsoftClientId) +
       '" placeholder="Use Relay default" maxlength="40"><span>Optional approved public application ID.</span>') +
-    '</details></section></div><div class="row" style="margin:14px 0">' +
+    '</details></section><section class="panel fields"><h2>Shared files</h2>' +
+    '<label class="check"><input type="checkbox" name="sharedResourcePacks"' +
+    (setting.shared.resourcepacks ? ' checked' : '') + '> Share resource packs across all instances</label>' +
+    '<label class="check"><input type="checkbox" name="sharedShaderPacks"' +
+    (setting.shared.shaderpacks ? ' checked' : '') + '> Share shader packs across all instances</label>' +
+    '<p class="hint">Turning sharing on combines the folders. Turning it off copies the shared files back into each instance.</p>' +
+    '<div>' + button('Open shared folder', 'folder-open', 'shared-folder') + '</div></section></div>' +
+    '<div class="row" style="margin:14px 0">' +
     '<button class="button primary" type="submit">' + svg('check') + 'Save settings</button></div></form>' +
     '<section class="panel"><div class="split"><div><h2>Launcher updates</h2><p id="update-message" class="sub">' +
     esc(data.update?.message || 'Relay ' + data.appVersion) + '</p></div><div id="update-controls" class="row">' +
@@ -351,7 +358,8 @@ function settingsPage() {
       await api.settings({
         theme: f.theme.value, accent: f.accentEnabled.checked ? f.color.value : '', sounds: f.sounds.checked,
         toasts: f.toasts.checked, volume: Number(f.volume.value), ram: Number(f.ram.value),
-        java: f.java.value, microsoftClientId: f.microsoftClientId.value
+        java: f.java.value, microsoftClientId: f.microsoftClientId.value,
+        shared: { resourcepacks: f.sharedResourcePacks.checked, shaderpacks: f.sharedShaderPacks.checked }
       });
       await refresh();
       toast('Settings saved');
@@ -538,6 +546,8 @@ async function projectDialog(slug, target = discover.instance) {
       '<div class="row">' + image(project.icon_url, 'package', 'project-icon detail-logo') + '<div><strong>' +
       esc(categoryNames[project.project_type]) + '</strong><p class="tile-note">' + count.format(project.downloads || 0) + ' downloads</p></div></div>' +
       '<p class="detail-text">' + esc(project.description) + '</p>' + instanceSelect + versionSelect +
+      '<div class="row project-install-result" hidden><span role="status"></span>' +
+      button('Open instance', 'arrow-up-right', 'installed-instance') + '</div>' +
       '<div id="modal-catalog-progress">' + progressHtml(contentProgress) + '</div>',
       button('View on Modrinth', 'external-link', 'open-modrinth', { id: project.project_type + '/' + project.slug }) +
       button(isPack ? 'Install modpack' : 'Install', 'download', 'install-content', {
@@ -545,6 +555,24 @@ async function projectDialog(slug, target = discover.instance) {
       }));
     const select = $('#install-target', modal);
     if (select) select.onchange = () => projectDialog(slug, select.value);
+    const version = $('#project-version', modal);
+    if (version) {
+      version.onchange = () => {
+        const installed = isPack ? data.instances.find(item => item.modpack?.project === project.id && item.modpack.version === version.value) :
+          itemById(target)?.content.find(entry => entry.project === project.id && entry.version === version.value);
+        const result = $('.project-install-result', modal);
+        result.hidden = !installed;
+        $('[role=status]', result).textContent = installed?.shared ? 'Installed in shared files' : 'Installed';
+        const open = $('button', result);
+        open.hidden = !isPack || !installed;
+        open.dataset.id = isPack ? installed?.id || '' : '';
+        const install = $('[data-action=install-content]', modal);
+        install.disabled = installingContent || Boolean(contentProgress) || (!isPack && (!target || Boolean(installed)));
+        const label = installed ? isPack ? 'Install another copy' : 'Installed' : isPack ? 'Install modpack' : 'Install';
+        install.innerHTML = svg(installed && !isPack ? 'check' : 'download') + label;
+      };
+      version.onchange();
+    }
   } catch (error) {
     if (modal.open && sequence === projectSequence) modalError(error);
   }
@@ -565,6 +593,11 @@ async function action(name, id, control) {
     case 'retry-search': await loadSearch(); break;
     case 'create': createDialog(); break;
     case 'view-instance': activeItem = id; navigate('instance'); break;
+    case 'installed-instance':
+      modal.close();
+      activeItem = id;
+      navigate('instance');
+      break;
     case 'edit': editDialog(item); break;
     case 'folder': await api.folder(id); break;
     case 'delete-instance': confirmDialog('Delete ' + item.name + '?', 'The instance folder and its worlds will be moved to the Recycle Bin.', 'Delete instance', 'delete-confirmed', id); break;
@@ -611,24 +644,37 @@ async function action(name, id, control) {
     case 'project': await projectDialog(id, page === 'discover' ? discover.instance : ''); break;
     case 'open-modrinth': await api.open('https://modrinth.com/' + id); break;
     case 'install-content': {
-      const version = $('#project-version', modal).value;
-      const target = $('#install-target', modal)?.value;
+      if (installingContent) return;
+      const version = $('#project-version', modal);
+      const target = $('#install-target', modal);
+      installingContent = true;
+      version.disabled = true;
+      if (target) target.disabled = true;
       control.disabled = true;
       try {
-        const result = await api.installProject(id, version, target);
-        modal.close();
+        const result = await api.installProject(id, version.value, target?.value);
         await refresh(false);
-        activeItem = target || result.id;
-        navigate('instance');
+        if (page === 'discover') {
+          const compatible = $('#compatible');
+          if (compatible) compatible.innerHTML = option('', 'All versions', discover.instance) +
+            data.instances.map(item => option(item.id, item.name, discover.instance)).join('');
+        } else if (page === 'library' || page === 'instance') {
+          render();
+        }
         toast('Installed ' + result.name);
       } finally {
-        control.disabled = false;
+        installingContent = false;
+        version.disabled = false;
+        if (target) target.disabled = false;
+        $('#project-version', modal)?.dispatchEvent(new Event('change'));
       }
       break;
     }
     case 'remove-content': {
       const entry = itemById(activeItem).content.find(entry => entry.project === id);
-      confirmDialog('Remove ' + entry.name + '?', 'Relay will remove its downloaded file from this instance.', 'Remove', 'remove-confirmed', id);
+      const message = entry.shared ? 'This removes the downloaded file from all instances using the shared folder.' :
+        'Relay will remove its downloaded file from this instance.';
+      confirmDialog('Remove ' + entry.name + '?', message, 'Remove', 'remove-confirmed', id);
       break;
     }
     case 'remove-confirmed':
@@ -644,6 +690,7 @@ async function action(name, id, control) {
       break;
     }
     case 'test-sound': playTone('success', Number($('#settings-form').elements.volume.value)); break;
+    case 'shared-folder': await api.openSharedFolder(); break;
     case 'check-update':
       await api.checkUpdates();
       if (page !== 'settings') navigate('settings');
@@ -673,6 +720,7 @@ api.onEvent(event => {
       const node = $(selector);
       if (node) node.innerHTML = progressHtml(event.message);
     }
+    $('#project-version', modal)?.dispatchEvent(new Event('change'));
   }
   if (event.type === 'game-start' || event.type === 'game-exit') {
     refresh(page !== 'settings').catch(error => toast(errorText(error), 'error'));

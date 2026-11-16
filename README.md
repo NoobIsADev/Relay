@@ -13,6 +13,8 @@ Vanilla, Fabric, Legacy Fabric, Forge, LiteLoader, and Quilt are available in th
 
 Settings include the Light Blue, Midnight, Mint, Lavender, and Windows themes, a custom accent, notification sounds and toasts, memory limits, and Java overrides. Instance names, accents, memory, and Java settings can be customized independently.
 
+Under **Settings → Shared files**, you can share resource packs and shader packs independently across every instance. Relay combines existing files into the shared folder and gives different files with the same name a numbered suffix. Turning sharing off gives each instance its own copy of the shared files. Pack selection still happens in each game instance.
+
 ## Microsoft sign-in
 
 Relay uses the same Prismarine Auth device-code flow as SpectorClient by default. Microsoft may show **Minecraft for Nintendo Switch**, the sign-in title that this library uses. Your system browser completes sign-in, then Relay requests your Minecraft Java profile. On Windows, Relay stores its token cache encrypted with Electron safeStorage. An approved public application ID can be set under **Settings → Microsoft account → Advanced sign-in** if needed.

@@ -132,6 +132,7 @@ dialog::backdrop{background:#07172f69;backdrop-filter:blur(3px)}
 .detail-banner{height:110px;margin:-20px -20px 16px;background:var(--cover) center/cover}
 .detail-logo{width:56px;height:56px}
 .detail-text{margin:10px 0 14px;color:var(--muted);overflow-wrap:anywhere}
+.project-install-result{margin:8px 0;color:var(--accent);font-size:12px;font-weight:650}
 #toasts{position:fixed;right:17px;bottom:17px;width:min(365px,85vw);display:grid;gap:7px;z-index:10;pointer-events:none}
 .toast{pointer-events:auto;display:flex;align-items:center;gap:8px;background:var(--pure);padding:9px 10px;border:1px solid var(--line);border-radius:9px;box-shadow:0 8px 26px #152a5528}
 .toast>.icon{color:var(--accent)}.toast.error>.icon{color:var(--danger)}.toast .icon-button{margin-left:auto;width:26px;height:24px}

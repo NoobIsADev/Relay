@@ -6,6 +6,7 @@ const { randomUUID } = require('node:crypto');
 const yauzl = require('yauzl');
 const { cleanVersion, inside } = require('./storage.cjs');
 const { download, getJson } = require('./network.cjs');
+const { contents, folderOf, isShared } = require('./sharing.cjs');
 
 const api = 'https://api.modrinth.com/v2';
 const types = { mod: 'mods', resourcepack: 'resourcepacks', shader: 'shaderpacks', modpack: '' };
@@ -98,7 +99,7 @@ async function parallel(items, limit, task) {
   if (failure) throw failure;
 }
 
-function createCatalog(root, store, send) {
+function createCatalog(root, store, send, sharing) {
   async function installPack(project, version, pickedFile) {
     if (!pickedFile.filename.endsWith('.mrpack')) throw new Error('This version does not have a .mrpack download.');
     const id = randomUUID();
@@ -178,7 +179,7 @@ function createCatalog(root, store, send) {
         ram: 0, java: '', created: Date.now(), lastPlayed: 0,
         modpack: { project: project.id, version: version.id }, content: []
       };
-      await store.change(state => { state.instances.unshift(item); });
+      await sharing.add(item);
       moved = false;
       return item;
     } finally {
@@ -189,7 +190,7 @@ function createCatalog(root, store, send) {
   }
 
   async function installProject(project, version, item) {
-    const rootDir = store.dir(item.id);
+    const currentContent = contents(store.get(), item);
     const plans = new Map();
     const visited = new Set();
 
@@ -216,8 +217,8 @@ function createCatalog(root, store, send) {
       const file = primary(release);
       const relative = types[type] + '/' + file.filename;
       if (/[\\/]/.test(file.filename) || !/\.(jar|zip|litemod)$/i.test(file.filename)) throw new Error('Unsupported Modrinth filename.');
-      const output = inside(rootDir, relative);
-      const conflict = (item.content || []).find(entry => entry.relative.toLowerCase() === relative.toLowerCase() && entry.project !== current.id);
+      const output = sharing.file(item, relative);
+      const conflict = currentContent.find(entry => entry.relative.toLowerCase() === relative.toLowerCase() && entry.project !== current.id);
       if (conflict || [...plans.values()].some(entry => entry.relative.toLowerCase() === relative.toLowerCase())) {
         throw new Error('Two projects use the same filename.');
       }
@@ -236,13 +237,13 @@ function createCatalog(root, store, send) {
         await download(entry.file.url, entry.temp, { hosts: modrinthHosts, size: entry.file.size, hashes: entry.file.hashes });
       }
       for (const [index, entry] of pending.entries()) {
-        const existing = (item.content || []).find(previous => previous.project === entry.project);
-        const old = existing ? inside(rootDir, existing.relative) : entry.output;
+        const existing = currentContent.find(previous => previous.project === entry.project);
+        const old = existing ? sharing.file(item, existing.relative) : entry.output;
         const backup = path.join(staged, 'previous-' + index);
         await fs.mkdir(path.dirname(entry.output), { recursive: true });
         const exists = await fs.access(entry.output).then(() => true, () => false);
         if (exists && (!existing || old.toLowerCase() !== entry.output.toLowerCase())) {
-          throw new Error('A file named ' + path.basename(entry.output) + ' already exists in your instance.');
+          throw new Error('A file named ' + path.basename(entry.output) + ' already exists in the destination folder.');
         }
         const hadOld = await fs.rename(old, backup).then(() => true, error => {
           if (error.code === 'ENOENT') return false;
@@ -256,8 +257,11 @@ function createCatalog(root, store, send) {
       await store.change(state => {
         const target = state.instances.find(value => value.id === item.id);
         target.content = (target.content || []).filter(entry => !plans.has(entry.project));
-        target.content.push(...pending.map(({ project, name, version, versionName, icon, relative }) =>
-          ({ project, name, version, versionName, icon, relative })));
+        state.sharedContent = state.sharedContent.filter(entry => !plans.has(entry.project));
+        for (const { project, name, version, versionName, icon, relative } of pending) {
+          const list = isShared(state.settings, folderOf(relative)) ? state.sharedContent : target.content;
+          list.push({ project, name, version, versionName, icon, relative });
+        }
       });
       return { name: project.title, total: pending.length };
     } catch (error) {

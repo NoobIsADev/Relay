@@ -2,7 +2,10 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 
-const defaults = { theme: 'sky', accent: '', sounds: true, volume: 45, toasts: true, ram: 4096, java: '', microsoftClientId: '' };
+const defaults = {
+  theme: 'sky', accent: '', sounds: true, volume: 45, toasts: true, ram: 4096, java: '', microsoftClientId: '',
+  shared: { resourcepacks: false, shaderpacks: false }
+};
 
 async function readJson(file, fallback) {
   try {
@@ -43,7 +46,11 @@ function cleanVersion(value) {
 async function openStore(root) {
   const file = path.join(root, 'library.json');
   const stored = await readJson(file, {});
-  let state = { settings: { ...defaults, ...stored.settings }, instances: stored.instances || [], account: stored.account || null };
+  let state = {
+    settings: { ...defaults, ...stored.settings, shared: { ...defaults.shared, ...stored.settings?.shared } },
+    instances: stored.instances || [], account: stored.account || null,
+    sharedContent: stored.sharedContent || [], sharingCommit: stored.sharingCommit || ''
+  };
   let saving = Promise.resolve();
   return {
     get: () => state,

@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('relay', {
   openCode: () => invoke('account:browser'),
   copyCode: code => invoke('account:copy', code),
   settings: data => invoke('settings:save', data),
+  openSharedFolder: () => invoke('settings:shared-folder'),
   java: () => invoke('settings:java'),
   checkUpdates: () => invoke('updates:check'),
   applyUpdate: () => invoke('updates:install'),

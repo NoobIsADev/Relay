@@ -1,7 +1,7 @@
 {
   "name": "relay-minecraft-launcher",
   "productName": "Relay",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A customizable Minecraft: Java Edition launcher for Windows",
   "author": "NoobIsADev",
   "private": true,
